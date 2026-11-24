@@ -2,15 +2,17 @@
 
 在 Windows 11 x64 的本机把视频里的字幕、角色名牌、界面文字和活动说明改成目标语言。默认韩语，每批 1–20 条，保留原声音轨。视觉推理使用你指定的 Chat Completions 兼容 API。
 
+首次配置时 API 地址、视觉模型 ID 和 API Key 均为空，由你填写。你可以独立选择用于操作插件的 AI 助手，以及用于视频识别和翻译的视觉模型服务。
+
 ## 在 AI 助手里开始
 
 把[这个公开仓库](https://github.com/pangmao529-eng/video-localizer)和下面这句话发给能够操作本机文件的 AI 助手。
 
 > 请按这个仓库的 Windows 安装说明，为我安装 Video Localizer 并连接到我当前使用的助手。打开本机模型配置窗口，我自己输入 API Key。装好后等我选择视频。
 
-1. 下载 [Windows x64 安装包](https://github.com/pangmao529-eng/video-localizer/releases/download/v0.1.0-rc.1/YoungTiger-VideoLocalizer-Setup-x64.exe)和[对应的 SHA-256 校验文件](https://github.com/pangmao529-eng/video-localizer/releases/download/v0.1.0-rc.1/YoungTiger-VideoLocalizer-Setup-x64.exe.sha256)。下载目录中运行 `Get-FileHash .\YoungTiger-VideoLocalizer-Setup-x64.exe -Algorithm SHA256`，将结果与校验文件里的 64 位十六进制值比对。[v0.1.0-rc.1 预发行说明](https://github.com/pangmao529-eng/video-localizer/releases/tag/v0.1.0-rc.1) · [本版源码](https://github.com/pangmao529-eng/video-localizer/tree/v0.1.0-rc.1)
+1. 下载 [Windows x64 安装包](https://github.com/pangmao529-eng/video-localizer/releases/download/v0.1.0-rc.2/YoungTiger-VideoLocalizer-Setup-x64.exe)和[对应的 SHA-256 校验文件](https://github.com/pangmao529-eng/video-localizer/releases/download/v0.1.0-rc.2/YoungTiger-VideoLocalizer-Setup-x64.exe.sha256)。下载目录中运行 `Get-FileHash .\YoungTiger-VideoLocalizer-Setup-x64.exe -Algorithm SHA256`，将结果与校验文件里的 64 位十六进制值比对。[v0.1.0-rc.2 预发行说明](https://github.com/pangmao529-eng/video-localizer/releases/tag/v0.1.0-rc.2) · [本版源码](https://github.com/pangmao529-eng/video-localizer/tree/v0.1.0-rc.2)
 2. 核对一致后运行安装包。它安装在当前 Windows 用户下，自带 Python、FFmpeg、FFprobe、图像处理库和韩文字体。此预发行包未作发布者代码签名。
-3. 在开始菜单打开模型配置，或在 PowerShell 执行下面的命令。填入服务商给出的 API 地址、可看图的模型 ID、API Key。密钥通过遮挡输入进入 Windows 凭据管理器。支持带 `/v1` 的服务根地址或完整 `/chat/completions` 端点，本机模型可使用回环 HTTP 地址。模型须支持图文消息和 JSON 格式回答。
+3. 在开始菜单打开 **Video Localizer 模型配置**，或在 PowerShell 执行下面的命令。填入服务商给出的 API 地址、可看图的模型 ID、API Key。密钥通过遮挡输入进入 Windows 凭据管理器。支持带 `/v1` 的服务根地址或完整 `/chat/completions` 端点，本机模型可使用回环 HTTP 地址。模型须支持图文消息和 JSON 格式回答。
 
 ```powershell
 $vl = Join-Path $env:LOCALAPPDATA 'YoungTiger\VideoLocalizer\video-localizer.exe'
@@ -30,7 +32,7 @@ $vl = Join-Path $env:LOCALAPPDATA 'YoungTiger\VideoLocalizer\video-localizer.exe
 | VS Code 中的 GitHub Copilot | `& $vl connect --host copilot` |
 | 其他支持本地 MCP 的助手 | `& $vl connect --host generic`，将返回的启动参数填入该助手的 MCP 设置 |
 
-注册后按客户端提示重新载入工具。若客户端由组织管理，使用其允许的 MCP 或本地终端入口。可在当前助手里调用 `check_setup` 查看本机依赖和密钥配置状态。没有 MCP 的本机助手可以直接运行下面的命令行。
+注册后按客户端提示重新载入工具。若客户端由组织管理，使用其允许的 MCP 或本地终端入口。在助手里说“打开 Video Localizer 的模型配置窗口”，助手可以调用 `open_model_configuration`。随后在本机窗口填写配置并保存，调用 `check_setup` 查看本机依赖和密钥配置状态。没有 MCP 的本机助手可以直接运行下面的命令行。
 
 ## 批量改字
 

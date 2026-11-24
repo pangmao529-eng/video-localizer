@@ -82,7 +82,8 @@ Section
   FileClose $1
   System::Call 'kernel32::MoveFileExW(w "$INSTDIR\active.next", w "$INSTDIR\active.txt", i 9) i.r1'
   IntCmp $1 0 failed
-  CreateShortCut "$SMPROGRAMS\Young Tiger Video Localizer.lnk" "$INSTDIR\video-localizer.exe" "setup --gui"
+  CreateShortCut "$SMPROGRAMS\Video Localizer 模型配置.lnk" "$INSTDIR\video-localizer.exe" "setup --gui"
+  Delete "$SMPROGRAMS\Young Tiger Video Localizer.lnk"
   WriteRegStr HKCU "${ARP}" "DisplayName" "Young Tiger Video Localizer"
   WriteRegStr HKCU "${ARP}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${ARP}" "Publisher" "Young Tiger"
@@ -106,6 +107,7 @@ Section "Uninstall"
   IfFileExists "$INSTDIR\active.txt" +2
   Abort "Installation metadata is missing."
   Delete "$SMPROGRAMS\Young Tiger Video Localizer.lnk"
+  Delete "$SMPROGRAMS\Video Localizer 模型配置.lnk"
   DeleteRegKey HKCU "${ARP}"
   Delete "$INSTDIR\video-localizer.cmd"
   Delete "$INSTDIR\video-localizer.exe"

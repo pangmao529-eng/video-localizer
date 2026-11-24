@@ -1,12 +1,15 @@
 """Newline-delimited JSON-RPC over stdio, scoped to the running assistant."""
 
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 
 from . import __version__
 from .batch import convert, doctor
+from .config import app_dir
 
 
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
@@ -23,12 +26,17 @@ PARAMS = {
     "references": {"type": "string", "description": "Optional portraits folder or JSON reference manifest."},
 }
 TOOLS = [
-    {"name": "check_setup", "description": "Check local runtime and whether a model credential is configured. Does not contact the model.", "inputSchema": EMPTY},
+    {"name": "check_setup", "description": "Check local runtime and whether a model credential is configured. Does not contact the model.",
+     "annotations": {"readOnlyHint": True}, "inputSchema": EMPTY},
+    {"name": "open_model_configuration",
+     "description": "Open the Windows model settings window so the user can enter their API URL, vision model ID and API key locally. After the user saves, call check_setup.",
+     "annotations": {"readOnlyHint": False}, "inputSchema": EMPTY},
     {"name": "convert_videos", "description": "Start a local video lettering batch in this connection. Model calls send selected frames to the configured API. Poll batch_progress until complete, then present output and review paths.", "inputSchema": {
-        "type": "object", "properties": PARAMS, "required": ["inputs", "output_dir"], "additionalProperties": False}},
+        "type": "object", "properties": PARAMS, "required": ["inputs", "output_dir"], "additionalProperties": False},
+     "annotations": {"readOnlyHint": False}},
     {"name": "batch_progress", "description": "Wait briefly for the active batch in this assistant and return progress or its final result.", "inputSchema": {
         "type": "object", "properties": {"wait_seconds": {"type": "integer", "minimum": 0, "maximum": 20}},
-        "additionalProperties": False}},
+        "additionalProperties": False}, "annotations": {"readOnlyHint": True}},
 ]
 
 
@@ -56,6 +64,17 @@ class Session:
             raise ValueError("工具参数需要 JSON 对象。")
         if name == "check_setup" and not args:
             return doctor()
+        if name == "open_model_configuration" and not args:
+            launcher = Path(os.environ.get("VIDEO_LOCALIZER_EXE") or app_dir() / "video-localizer.exe")
+            if not launcher.is_absolute() or not launcher.is_file():
+                raise ValueError("找不到本机安装的 Video Localizer，请先安装 Windows 版。")
+            subprocess.Popen(
+                [str(launcher), "setup", "--gui"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                close_fds=True, creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            return {"status": "window_requested",
+                    "message": "请在本机配置窗口填写 API 地址、视觉模型 ID 和 API Key。保存后调用 check_setup 检查配置状态。"}
         if name == "convert_videos":
             if set(args) - PARAMS.keys() or not {"inputs", "output_dir"} <= args.keys():
                 raise ValueError("请提供 inputs、output_dir 及支持的可选参数。")
