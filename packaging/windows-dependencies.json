@@ -1,0 +1,59 @@
+{
+  "python": {
+    "file": "python-3.13.17-embed-amd64.zip",
+    "url": "https://www.python.org/ftp/python/3.13.17/python-3.13.17-embed-amd64.zip",
+    "mirrors": [
+      "https://mirrors.nju.edu.cn/python/3.13.17/python-3.13.17-embed-amd64.zip",
+      "https://mirrors.huaweicloud.com/python/3.13.17/python-3.13.17-embed-amd64.zip"
+    ],
+    "sha256": "9e35319bffedab8b36ad44d8f377cb4f1733bcec257a0b6d04d94f01486ddb38"
+  },
+  "numpy": {
+    "file": "numpy-2.2.6-cp313-cp313-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/cb/3b/d58c12eafcb298d4e6d0d40216866ab15f59e55d148a5658bb3132311fcf/numpy-2.2.6-cp313-cp313-win_amd64.whl",
+    "sha256": "b0544343a702fa80c95ad5d3d608ea3599dd54d4632df855e4c8d24eb6ecfa1c"
+  },
+  "pillow": {
+    "file": "pillow-13.0.0-cp313-cp313-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/d7/ed/1b16fb66a37e1b9e41370b93b2c614c7da761a5b2a41dc333f7af4639962/pillow-13.0.0-cp313-cp313-win_amd64.whl",
+    "sha256": "9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42"
+  },
+  "opencv": {
+    "file": "opencv_python_headless-4.12.0.88-cp37-abi3-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/f2/35/0858e9e71b36948eafbc5e835874b63e515179dc3b742cbe3d76bc683439/opencv_python_headless-4.12.0.88-cp37-abi3-win_amd64.whl",
+    "sha256": "86b413bdd6c6bf497832e346cd5371995de148e579b9774f8eba686dee3f5528"
+  },
+  "ffmpeg": {
+    "file": "ffmpeg-9.0.2-essentials_build.zip",
+    "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+    "mirrors": ["https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip"],
+    "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
+  },
+  "font": {
+    "file": "NotoSansCJKkr-Regular.otf",
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf",
+    "mirrors": [
+      "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf",
+      "https://github.com/notofonts/noto-cjk/raw/refs/tags/Sans2.004/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf"
+    ],
+    "sha256": "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a"
+  },
+  "font_license": {
+    "file": "Noto-OFL.txt",
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/LICENSE",
+    "mirrors": [
+      "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@Sans2.004/LICENSE",
+      "https://github.com/notofonts/noto-cjk/raw/refs/tags/Sans2.004/LICENSE"
+    ],
+    "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+  },
+  "nsis": {
+    "file": "nsis-3.11.zip",
+    "url": "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.11/nsis-3.11.zip",
+    "mirrors": [
+      "https://netix.dl.sourceforge.net/project/nsis/NSIS%203/3.11/nsis-3.11.zip",
+      "https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11.zip/download"
+    ],
+    "sha256": "c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1"
+  }
+}

@@ -1,0 +1,74 @@
+name: Windows video-localizer installer
+
+on:
+  push:
+    tags: ['v0.1.0-rc.1']
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/video_localizer/**'
+      - 'packaging/**'
+      - 'README.md'
+      - 'LICENSE.txt'
+      - '.github/workflows/windows-candidate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows x64 installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python packaging/build_windows.py --output-dir (Join-Path $env:RUNNER_TEMP 'candidate') --cache-dir (Join-Path $env:RUNNER_TEMP 'installer-cache')
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-localizer-windows-x64-candidate
+          path: ${{ runner.temp }}/candidate/YoungTiger-VideoLocalizer-Setup-x64.exe*
+          if-no-files-found: error
+
+  prerelease:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.0-rc.1'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency: prerelease-${{ github.ref }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: video-localizer-windows-x64-candidate
+          path: release
+      - name: Verify and publish the tagged Windows prerelease
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=YoungTiger-VideoLocalizer-Setup-x64.exe
+          tr -d '\r' < "$exe.sha256" | sha256sum --check -
+          if gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease,assets > "$RUNNER_TEMP/existing-release.json"; then
+            if jq -e '.isDraft' "$RUNNER_TEMP/existing-release.json" > /dev/null; then
+              gh release upload "$TAG" "$exe" "$exe.sha256" --repo "$REPO" --clobber
+              gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
+            else
+              # Preserve published bytes if all assets are already present on a rerun.
+              jq -e --arg exe "$exe" '.isPrerelease and
+                ([.assets[].name] | index($exe) != null and index($exe + ".sha256") != null)' \
+                "$RUNNER_TEMP/existing-release.json" > /dev/null
+            fi
+          else
+            gh release create "$TAG" "$exe" "$exe.sha256" --repo "$REPO" --verify-tag \
+              --prerelease --latest=false --title "Video Localizer $TAG · Windows x64" \
+              --notes "Windows x64 离线安装包。请将安装文件的 SHA-256 与随附的 .sha256 文件核对后运行。此预发行包未作发布者代码签名。"
+          fi

@@ -1,0 +1,37 @@
+Young Tiger Video Localizer - Windows distribution
+
+The bundled programs and libraries retain their respective copyrights and
+licenses. windows-dependencies.json records the source URL and SHA-256 of
+each upstream archive or file used by this distribution.
+
+CPython 3.13.17, Windows embedded x64 distribution.
+PSF License and component notices: ../runtime/LICENSE.txt
+https://www.python.org/downloads/release/python-31317/
+
+NumPy 2.2.6, including the DLLs supplied by the Windows wheel.
+BSD and bundled component notices: ../runtime/site-packages/numpy-2.2.6.dist-info/LICENSE.txt
+https://github.com/numpy/numpy/tree/v2.2.6
+
+OpenCV-Python Headless 4.12.0.88 and OpenCV 4.12.0.
+Wheel and library notices: ../runtime/site-packages/cv2/LICENSE.txt
+Third-party library notices: ../runtime/site-packages/cv2/LICENSE-3RD-PARTY.txt
+https://github.com/opencv/opencv-python/tree/88
+https://github.com/opencv/opencv/tree/4.12.0
+
+Pillow 13.0.0 and its wheel-provided image libraries.
+HPND and bundled component licenses: ../runtime/site-packages/pillow-13.0.0.dist-info/licenses/
+https://github.com/python-pillow/Pillow/tree/13.0.0
+
+Noto Sans CJK KR Regular, Sans 2.004, from the Noto project.
+SIL Open Font License 1.1: Noto-OFL.txt
+https://github.com/notofonts/noto-cjk/tree/Sans2.004
+
+FFmpeg and ffprobe 9.0.2, Gyan Windows essentials build; unmodified binaries
+distributed as separate command-line programs. GNU GPL version 3.
+License: FFmpeg-GPLv3.txt; upstream build configuration: FFmpeg-build.txt
+FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/946fcce07b
+Build information, bundled libraries and source links: https://www.gyan.dev/ffmpeg/builds/
+
+NSIS 3.11 provides the Windows installation and uninstallation engine.
+License and component notices: NSIS-COPYING.txt
+https://nsis.sourceforge.io/License
