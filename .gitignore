@@ -5,3 +5,14 @@ build/
 dist/
 *.exe
 .env
+.env.*
+!.env.example
+settings.json
+profiles.json
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.wav
+*.mp3

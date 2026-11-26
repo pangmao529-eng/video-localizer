@@ -1,0 +1,35 @@
+{
+  "provenance": "Frozen rc7 _engine.text_layer; synthetic strings only",
+  "engine_sha256": "f6a880e05d5bc0c9b0212970ce763f9419d281f01b5022127878dd3825c24c39",
+  "font_sha256": "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a",
+  "pillow_version": "13.0.0",
+  "layout_engine": 0,
+  "box": [
+    0,
+    0,
+    200,
+    85
+  ],
+  "style": {
+    "font": "sans",
+    "fontSize": 32,
+    "color": "#ffffff",
+    "outlineColor": "#ff0000",
+    "outlineWidth": 1,
+    "align": "center"
+  },
+  "samples": [
+    {
+      "text": "시작 GAME",
+      "rgba_sha256": "19d66d7801ff9837bec6ddb83b12ba7f2987cc664be2eaebb6ba71eb839d8cd4"
+    },
+    {
+      "text": "한국어\nEnglish",
+      "rgba_sha256": "02c8899a881be8c5892cb80f3b2e439496006ded0fdfe90e8828a9e938445719"
+    },
+    {
+      "text": "각",
+      "rgba_sha256": "fb7cf618008b1e3818f92427d365b671aaee30a02428d6952ff42944f1969894"
+    }
+  ]
+}

@@ -5,7 +5,6 @@ import io
 import json
 import unicodedata
 from dataclasses import dataclass, field
-from itertools import chain
 from pathlib import Path
 
 
@@ -22,6 +21,7 @@ class Materials:
     translations: dict = field(default_factory=dict)
     glossary: dict = field(default_factory=dict)
     references: dict = field(default_factory=dict)
+    provenance: dict = field(default_factory=dict)
 
 
 SOURCE_COLUMNS = ("source", "source_text", "source_ja", "source_zh", "original", "原文", "源文本", "中文", "日文", "日语")
@@ -50,7 +50,26 @@ def _row_pair(row):
     raise MaterialsError("Each table row must have source and target columns.")
 
 
-def _load_table(value, table_name):
+def _csv_rows(data, ext):
+    """Keep physical line locations without changing CSV/header interpretation."""
+    reader = csv.reader(io.StringIO(data, newline=""), delimiter="\t" if ext == ".tsv" else ",", strict=True)
+    header = next(reader, [])
+    has_header = any(normalized(c) in SOURCE_COLUMNS for c in header) and any(normalized(c) in TARGET_COLUMNS for c in header)
+    record = 1
+    if not has_header and header:
+        yield header, header, 1, record, None
+    while True:
+        line = reader.line_num + 1
+        try:
+            row = next(reader)
+        except StopIteration:
+            break
+        record += 1
+        if row:
+            yield dict(zip(header,row)) if has_header else row, row, line, record, header if has_header else None
+
+
+def _load_table(value, table_name, provenance=None):
     if value is None:
         return {}
     path = Path(value)
@@ -65,18 +84,14 @@ def _load_table(value, table_name):
                 rows = list(rows.items())
             if not isinstance(rows, list):
                 raise MaterialsError("Expected an array of rows or a source-to-target object.")
+            located = ((row, row, None, index, None) for index,row in enumerate(rows,1))
         elif ext in (".csv", ".tsv"):
-            rows = csv.reader(io.StringIO(data, newline=""), delimiter="\t" if ext == ".tsv" else ",", strict=True)
-            header = next(rows, [])
-            if any(normalized(c) in SOURCE_COLUMNS for c in header) and any(normalized(c) in TARGET_COLUMNS for c in header):
-                rows = (dict(zip(header, row)) for row in rows if row)
-            else:
-                rows = chain([header] if header else [], (row for row in rows if row))
+            located = _csv_rows(data,ext)
         else:
             raise MaterialsError("Translation tables must be UTF-8 CSV, TSV or JSON.")
 
         result = {}
-        for number, row in enumerate(rows, 1):
+        for number, (row,raw_row,line,row_number,columns) in enumerate(located, 1):
             if number > 50000:
                 raise MaterialsError("The table exceeds 50,000 rows.")
             source, target = _row_pair(row)
@@ -86,6 +101,12 @@ def _load_table(value, table_name):
             values = result.setdefault(key, [])
             if target.strip() not in values:
                 values.append(target.strip())
+            if provenance is not None:
+                provenance.setdefault(key,[]).append({
+                    "file": str(path.resolve()), "table": table_name, "row_number": row_number,
+                    "line_number": line, "row_kind": "json_record" if ext == ".json" else "csv_record",
+                    "raw_row": raw_row, "columns": columns, "source": source, "target": target,
+                })
         return result
     except (json.JSONDecodeError, csv.Error, RecursionError) as exc:
         raise MaterialsError(f"Invalid syntax in {path.name}.") from exc
@@ -126,5 +147,7 @@ def _load_references(value):
 
 
 def load_materials(translations=None, glossary=None, references=None):
-    return Materials(_load_table(translations, "translations"), _load_table(glossary, "glossary"),
-                     _load_references(references))
+    provenance = {"translations":{},"glossary":{}}
+    return Materials(_load_table(translations, "translations",provenance["translations"]),
+                     _load_table(glossary, "glossary",provenance["glossary"]),
+                     _load_references(references),provenance)

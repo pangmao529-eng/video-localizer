@@ -27,11 +27,26 @@ def digest(path):
         return hashlib.file_digest(data, "sha256").hexdigest()
 
 
-def fetch(cache, spec):
+def launcher_identities(path):
+    """Stable source identity plus the equivalent legacy LF checkout identity.
+
+    Earlier installers hashed checkout bytes. Git line-ending conversion must
+    not turn an unchanged launcher into an update of a running executable.
+    Canonical CRLF preserves the identity shipped by the Windows rc2 build.
+    """
+    lf = Path(path).read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    crlf = lf.replace(b"\n", b"\r\n")
+    return (hashlib.sha256(crlf).hexdigest()[:32], hashlib.sha256(lf).hexdigest()[:32])
+
+
+def fetch(cache, spec, *, offline=False):
     target = cache / spec["file"]
     if target.is_file() and digest(target) == spec["sha256"]:
         print(f"[cache] {target.name} (SHA-256 verified)", flush=True)
         return target
+    if offline:
+        state = "SHA-256 mismatch" if target.is_file() else "missing"
+        raise RuntimeError(f"Offline dependency cache {state}: {target.name}")
     urls = [spec["url"], *spec.get("mirrors", [])]
     last_error = None
     with tempfile.NamedTemporaryFile(dir=cache, delete=False) as file:
@@ -108,14 +123,19 @@ def materialize(payload, files):
     version = re.search(r'__version__\s*=\s*"([^"]+)"', (code / "__init__.py").read_text()).group(1)
     (payload / "video-localizer-release.txt").write_text(version + "\n", encoding="ascii")
     subprocess.run([str(runtime / "python.exe"), "-X", "utf8", "-B", "-c",
-                    "import cv2, numpy, PIL, video_localizer; from PIL import ImageFont; "
-                    "ImageFont.truetype(r'fonts/NotoSansCJKkr-Regular.otf', 24)"], cwd=payload, check=True)
+                    "import cv2, numpy, PIL, video_localizer, pkgutil, importlib; "
+                    "from PIL import ImageFont; "
+                    "ImageFont.truetype(r'fonts/NotoSansCJKkr-Regular.otf', 24); "
+                    "modules = sorted(m.name for m in pkgutil.iter_modules(video_localizer.__path__, "
+                    "video_localizer.__name__ + '.')); "
+                    "[importlib.import_module(name) for name in modules]; "
+                    "print('[modules] ' + ', '.join(modules))"], cwd=payload, check=True)
     return version
 
 
-def install_payload(cache, scratch, output):
+def install_payload(cache, scratch, output, *, offline=False):
     specs = json.loads(LOCKFILE.read_text(encoding="utf-8"))
-    files = {key: fetch(cache, spec) for key, spec in specs.items()}
+    files = {key: fetch(cache, spec, offline=offline) for key, spec in specs.items()}
     payload = scratch / "payload"
     payload.mkdir()
     version = materialize(payload, files)
@@ -143,9 +163,10 @@ def install_payload(cache, scratch, output):
     # NSIS reads UTF-8 input with a BOM for translated UI labels.
     template = scratch / "installer.nsi"
     template.write_text((HERE / "installer.nsi").read_text(encoding="utf-8"), encoding="utf-8-sig")
+    launcher_id, legacy_launcher_id = launcher_identities(HERE / "Launcher.cs")
     options = {
         "OUTPUT": installer, "REVISION": signature.hexdigest()[:32], "PAYLOAD": payload,
-        "LAUNCHER": launcher, "LAUNCHER_ID": digest(HERE / "Launcher.cs")[:32],
+        "LAUNCHER": launcher, "LAUNCHER_ID": launcher_id, "LAUNCHER_LEGACY_LF_ID": legacy_launcher_id,
         "CMD_SHIM": cmd_shim, "UNINSTALL_FILES": remove, "VERSION": version,
         "PRODUCT_README": HERE.parent / "README.md",
     }
@@ -169,6 +190,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-dir", required=True, type=Path, help="download and temporary build directory")
     parser.add_argument("--output-dir", required=True, type=Path, help="directory for the setup EXE and SHA-256")
+    parser.add_argument("--offline", action="store_true", help="use only SHA-256-verified cached dependencies; never download")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("Use 64-bit Windows with .NET Framework 4.x and Python 3.11+ to build.")
@@ -177,7 +199,7 @@ def main():
     cache.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="win-build-", dir=cache) as scratch:
-        install_payload(cache, Path(scratch), output)
+        install_payload(cache, Path(scratch), output, offline=args.offline)
 
 
 if __name__ == "__main__":

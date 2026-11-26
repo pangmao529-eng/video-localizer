@@ -1,3 +1,3 @@
-"""Local batch video lettering for Windows and AI assistants."""
+"""Hunyuan-controlled local video lettering for Windows and AI assistants."""
 
-__version__ = "0.1.0rc2"
+__version__ = "0.2.0rc15"

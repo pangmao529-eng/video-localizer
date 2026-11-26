@@ -62,7 +62,10 @@ Section
   FileOpen $1 "$INSTDIR\launcher.id" r
   FileRead $1 $2
   FileClose $1
+  ; Checkout LF/CRLF differences are not launcher changes. Keep the executable
+  ; used by running MCP processes when either identity is the same source.
   StrCmp $2 "${LAUNCHER_ID}" launcher_present
+  StrCmp $2 "${LAUNCHER_LEGACY_LF_ID}" launcher_present
   write_launcher:
     ClearErrors
     File "${LAUNCHER}"

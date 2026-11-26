@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "kind": "sanitized_local_validation_summary",
+  "date": "2026-11-26",
+  "timezone": "Asia/Seoul",
+  "version": "0.2.0rc15",
+  "regression": {
+    "environment": "local_windows",
+    "tests_run": 317,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 51.552,
+    "real_api_calls": 0,
+    "synthetic_media_only": true,
+    "github_ci_result": false
+  },
+  "verified_local_build": {
+    "runtime_revision": "252433f6d970c589e22c6b6d84baf39e",
+    "packaged_files_verified": 25,
+    "installed_matches_frozen_source": true,
+    "installer_sha256": "5cb0b70bd5af38dc32d243872bd2e39d99257edf5194c1037f30d07450f826aa",
+    "installer_size_bytes": 161137552,
+    "binary_published_by_this_update": false,
+    "note": "The hash identifies the previously verified local installer; publication adds documentation and does not rebuild or publish that binary."
+  },
+  "native_connection": {
+    "fresh_connection_verified": true,
+    "running_version": "0.2.0rc15",
+    "provider": "seedance",
+    "model_reference_kind": "ark_endpoint_id",
+    "model_family": "seedance-2.0",
+    "model_family_source": "user_selected",
+    "existing_connection_hot_reloaded": false
+  },
+  "api_authentication": {
+    "native_probe_count": 1,
+    "request_type": "GET_video_task_list",
+    "http_status": 200,
+    "authentication_verified": true,
+    "model_access_verified": false,
+    "generation_submitted": false
+  },
+  "original_video_test": {
+    "tested_version": "0.2.0rc13",
+    "source_duration_seconds": 20.1,
+    "source_frame_count": 603,
+    "segment_frame_counts": [301, 302],
+    "status": "paused_error",
+    "phase": "segment_uploading",
+    "error_code": "network",
+    "failed_segment": 1,
+    "second_segment_processed": false,
+    "file_id_returned": false,
+    "upload_outcome_uncertain": true,
+    "generation_submit_started": false,
+    "generation_task_ids_returned": 0,
+    "candidate_created": false,
+    "visual_acceptance": "not_performed",
+    "source_and_segments_unchanged": true,
+    "checkpoint_preserved": true,
+    "rc14_rc15_upload_or_generation_retries": 0
+  },
+  "implemented_since_upload_test": [
+    "bounded_safe_transport_diagnostics_and_early_http_response_handling",
+    "ark_endpoint_id_with_explicit_seedance_model_family",
+    "family_and_model_binding_for_resumable_batches"
+  ],
+  "next_steps": [
+    "Resolve the existing upload outcome or obtain valid cloud references for the prepared segments.",
+    "Submit and poll the intended Seedance editing tasks with preserved identifiers.",
+    "Validate generated segments, assembly, original audio and visual localization quality."
+  ],
+  "redactions": [
+    "credentials",
+    "account_endpoint_identifiers",
+    "private_filesystem_paths",
+    "raw_logs_and_model_conversations",
+    "original_and_generated_media"
+  ]
+}

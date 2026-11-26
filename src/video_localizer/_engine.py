@@ -599,7 +599,10 @@ def track(root, payload, config, *, fixed_regions=False):
                         ink = infer_glyph_ink(rgb[y:y+h, x:x+w])
                         segment["mask"] = {"mode": "color", "color": ink, "tolerance": 40, "dilatePx": 1}
                         segment["style"] = {**segment.get("style", {}), "color": ink}
-                    glyph_mask(rgb[y:y+h, x:x+w], segment["mask"])
+                    # A model-authored bounded region program may construct its
+                    # own mask; geometry and text layout are still validated.
+                    if segment["id"] not in config.get("region_program_segments", ()):
+                        glyph_mask(rgb[y:y+h, x:x+w], segment["mask"])
                     score, method = 1.0, "manual_fixed_box" if fixed_regions else "model_keyframe"
                 else:
                     require(previous is not None and segment["frames"], "video_localization_tracking_uncertain")
@@ -1036,6 +1039,43 @@ def temporal_label_repair(patch, mask, previous, observed):
     return fringe,previous[fringe]
 
 
+def vertical_cells(text):
+    """Return supported single-codepoint cells, never split complex graphemes.
+
+    NFC is applied only to this ephemeral rendering value. The approved plan
+    text remains byte-for-byte unchanged. This is a deliberately restricted
+    repertoire, not a general Unicode grapheme segmenter or vertical shaper.
+    """
+    import unicodedata
+    require(isinstance(text, str) and text.strip(), "video_localization_vertical_text_unsupported")
+    cells = list(unicodedata.normalize("NFC", text))
+    for char in cells:
+        if char == " ":
+            continue
+        point = ord(char)
+        category = unicodedata.category(char)
+        # Reject even otherwise supported blocks' nonspacing/format characters.
+        # Halfwidth dakuten/handakuten are Lm, but extend the preceding kana.
+        require(not category.startswith(("M", "C")) and not char.isspace()
+                and point not in (0xFF9E, 0xFF9F), "video_localization_vertical_text_unsupported")
+        cjk = any(start <= point <= end for start, end in (
+            (0x2E80, 0x303F), (0x3040, 0x30FF), (0x3130, 0x318F), (0x31F0, 0x31FF),
+            (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xAC00, 0xD7A3), (0xF900, 0xFAFF),
+            (0xFF01, 0xFF60), (0xFF66, 0xFF9D), (0x20000, 0x323AF)))
+        simple = (cjk or unicodedata.name(char, "").startswith("LATIN ")
+                  or category.startswith("P") or category in ("Nd", "Sm", "Sc"))
+        require(simple, "video_localization_vertical_text_unsupported")
+    return cells
+
+
+def _vertical_text_layout(draw, font, cells, stroke, spacing, candidate):
+    bounds = [draw.textbbox((0, 0), char, font=font, stroke_width=stroke) for char in cells]
+    width = max(row[2]-row[0] for row in bounds)
+    cell_height = max(candidate+2*stroke, max(row[3]-row[1] for row in bounds))
+    height = len(cells)*cell_height+(len(cells)-1)*spacing
+    return bounds, width, height, cell_height
+
+
 def text_layer(segment, box, config, *, layout_only=False):
     from PIL import Image, ImageDraw, ImageFont
     w, h = box[2:]
@@ -1052,10 +1092,32 @@ def text_layer(segment, box, config, *, layout_only=False):
     require(all(isinstance(c, str) and re.fullmatch(r"#[a-fA-F0-9]{6}", c) for c in (color, outline)))
     align = style.get("align", "center")
     require(align in ("left", "center", "right"))
+    writing_mode = style.get("writingMode", "horizontal")
+    require(writing_mode in ("horizontal", "vertical_ttb"), "video_localization_writing_mode_unsupported")
     scale = 2
     layer = Image.new("RGBA", (1, 1) if layout_only else (w*scale, h*scale))
     draw = ImageDraw.Draw(layer)
     text = segment["translation"]
+
+    if writing_mode == "vertical_ttb":
+        cells = vertical_cells(text)
+        padding, spacing = 2*scale, 2*scale
+        for candidate in range(round(size*scale), 11, -1):
+            font = ImageFont.truetype(str(font_path), candidate)
+            bounds, tw, th, cell_height = _vertical_text_layout(draw, font, cells, stroke*scale, spacing, candidate)
+            if tw <= w*scale-2*padding and th <= h*scale-2*padding:
+                break
+        else:
+            raise BridgeError("video_localization_text_overflow")
+        if layout_only:
+            return None
+        x = padding if align == "left" else w*scale-tw-padding if align == "right" else (w*scale-tw)/2
+        top = (h*scale-th)/2
+        for index, (char, bound) in enumerate(zip(cells, bounds)):
+            gw, gh = bound[2]-bound[0], bound[3]-bound[1]
+            draw.text((x+(tw-gw)/2-bound[0], top+index*(cell_height+spacing)+(cell_height-gh)/2-bound[1]),
+                      char, font=font, fill=color, stroke_width=stroke*scale, stroke_fill=outline)
+        return layer.resize((w, h), Image.Resampling.LANCZOS)
 
     def wrap(font):
         # Prefer Korean word boundaries, with character wrapping for unspaced text.
@@ -1207,6 +1269,8 @@ def render(root, payload, config, *, erase_only=False):
             combined = np.zeros((h, w), dtype=np.uint8)
             replacements = []
             drawable = []
+            program_controls = {}
+            foreground_regions = []
             rendered_labels = set()
             if erase_only:
                 observed = np.ones((h,w),dtype=bool)
@@ -1220,6 +1284,19 @@ def render(root, payload, config, *, erase_only=False):
                 x, y, bw, bh = box
                 patch = original[y:y+bh, x:x+bw]
                 try:
+                    program = config.get("region_program")
+                    custom = program(segment,index,original,box) if program is not None and not erase_only else None
+                    if custom is not None:
+                        background = custom["background"]
+                        require(background.shape == patch.shape and background.dtype == np.uint8,
+                                "video_localization_invalid_region_program")
+                        full = np.ones((bh,bw),dtype=bool)
+                        replacements.append((x,y,bw,bh,full,background[full]))
+                        program_controls[segment["id"]] = custom["text_alpha"]
+                        if np.any(custom["foreground_mask"]):
+                            foreground_regions.append((x,y,bw,bh,custom["foreground_mask"]))
+                        drawable.append((segment,box))
+                        continue
                     if erase_only and policy.get("mode") == "auto":
                         policy = {"mode":"color","color":infer_glyph_ink(patch),"tolerance":40,"dilatePx":1}
                     mask = glyph_mask(patch,policy)
@@ -1279,8 +1356,18 @@ def render(root, payload, config, *, erase_only=False):
                         while layer_bytes > 64 * 1024**2 and len(layers) > 1:
                             _, evicted = layers.popitem(last=False)
                             layer_bytes -= evicted.width * evicted.height * 4
-                    canvas.alpha_composite(layer, (box[0], box[1]))
+                    if segment["id"] in program_controls:
+                        alpha = program_controls[segment["id"]]
+                        adjusted = layer.copy()
+                        adjusted.putalpha(Image.fromarray(np.clip(np.asarray(layer.getchannel("A"),dtype=float)*alpha,0,255).astype(np.uint8)))
+                        canvas.alpha_composite(adjusted, (box[0], box[1]))
+                    else:
+                        canvas.alpha_composite(layer, (box[0], box[1]))
             pixels = np.asarray(canvas.convert("RGB"))
+            if foreground_regions:
+                pixels = pixels.copy()
+                for x,y,bw,bh,foreground in foreground_regions:
+                    pixels[y:y+bh,x:x+bw][foreground] = original[y:y+bh,x:x+bw][foreground]
             if index in by_frame and np.any(original != pixels):
                 changed_frames += 1
             block = pixels.tobytes()
