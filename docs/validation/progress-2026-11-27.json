@@ -1,0 +1,36 @@
+{
+  "snapshot_date": "2026-11-27",
+  "timezone": "Asia/Seoul",
+  "installed_plugin_version": "0.2.0rc21",
+  "source_snapshot_includes_later_experiments": true,
+  "current_requirement": "Cloud model performs recognition, erasure, Korean rendering and tracking from a prompt; do not continue host-authored manual video repairs.",
+  "last20_test": {
+    "duration_seconds": 20,
+    "width": 1280,
+    "height": 720,
+    "frames": 600,
+    "source_ocr_completed": true,
+    "mediakit_text_erase_completed": true,
+    "visible_game_ui_and_skill_text_remains": true,
+    "visual_acceptance": "failed",
+    "manual_overlay_experiment": "stopped_by_user_before_candidate_render",
+    "full30_joined_candidate_delivered": false
+  },
+  "cloud_prompt_handoff": {
+    "reference_rows": 54,
+    "full30_prompt_characters": 2594,
+    "first10_prompt_characters": 574,
+    "providers_researched": ["Seedance 2.5", "Kling 4.0", "Wan 2.7 VideoEdit", "Runway Aleph 2.0"],
+    "new_provider_implementation_completed": false,
+    "new_provider_real_tests_completed": false,
+    "new_generation_jobs_submitted_in_research": 0
+  },
+  "publication": {
+    "kind": "progress_snapshot_prerelease",
+    "includes_source": true,
+    "includes_existing_rc21_installer": true,
+    "user_video_assets_included": false,
+    "credentials_or_signed_media_urls_included": false,
+    "human_visual_approval_recorded": false
+  }
+}

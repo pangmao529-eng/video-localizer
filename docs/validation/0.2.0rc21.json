@@ -1,0 +1,133 @@
+{
+  "version": "0.2.0rc21",
+  "validation_date": "2026-11-27",
+  "timezone": "Asia/Seoul",
+  "installer_sha256": "d0ec76863db3a9b56ea5ee4b12c81582ccd0ab7206f0dfac08d8d973ebce651b",
+  "installer_bytes": 161103076,
+  "regression": {
+    "tests": 305,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": true
+  },
+  "installation": {
+    "version": "0.2.0rc21",
+    "installed_source_files": 23,
+    "source_hashes_match": true,
+    "configuration_files_unchanged": true,
+    "previous_version_retained": true,
+    "mcp_tool_count": 11,
+    "mediakit_tools_present": true,
+    "mcp_setup": {
+      "provider": "mediakit",
+      "configured": true,
+      "credential_available": true,
+      "connection_tested": false,
+      "model_version": "v5.6"
+    }
+  },
+  "server_version": "1.3.0",
+  "server_revision": "69bbfc75b815c05536bda82b5c64db1d3cc50b6439fdb38753197afac1868d73",
+  "real_test": {
+    "source_name": "1029简中 (9)-前10秒.mp4",
+    "source_sha256": "266cb7fbc1cdc90ebe3aef211e8f7674aaeed190b17a097975ee4b6f4d8c284a",
+    "candidate_sha256": "c9afc97f260ccaebe96217b8d4f2d93fb2848a9849217d7a98c4cae506d986ca",
+    "duration_seconds": 10,
+    "width": 1280,
+    "height": 720,
+    "frames": 300,
+    "fps": 30,
+    "api_submission_counts": {
+      "source_ocr": 1,
+      "erase": 1,
+      "final_ocr": 1
+    },
+    "all_cloud_tasks_completed": true,
+    "technical_review": {
+      "status": "passed",
+      "checks": {
+        "full_decode": true,
+        "source_unchanged": true,
+        "dimensions_preserved": true,
+        "frame_count_preserved": true,
+        "frame_rate_preserved": true,
+        "duration_preserved": true,
+        "audio_presence_preserved": true,
+        "original_audio_preserved": true
+      },
+      "output_media": {
+        "durationMs": 10000.0,
+        "width": 1280,
+        "height": 720,
+        "fps": 30.0,
+        "bytes": 3154617,
+        "frame_count": 300,
+        "fpsRatio": "30/1",
+        "videoCodec": "h264",
+        "audioCodec": "aac",
+        "hasAudio": true,
+        "sha256": "c9afc97f260ccaebe96217b8d4f2d93fb2848a9849217d7a98c4cae506d986ca"
+      },
+      "visual_acceptance": "not_performed",
+      "model_reviewed": false,
+      "output_sha256": "c9afc97f260ccaebe96217b8d4f2d93fb2848a9849217d7a98c4cae506d986ca",
+      "source_audio_reused": true,
+      "composition_mode": "source_roi",
+      "pixel_preservation_guaranteed": false,
+      "video_reencoded": true,
+      "cue_count": 4,
+      "download_checks": {
+        "width": true,
+        "height": true,
+        "fps_ratio": true,
+        "frame_count": true,
+        "has_audio": true,
+        "duration": true
+      }
+    },
+    "visual_review": {
+      "status": "passed_for_tested_regions",
+      "reviewer": "Codex visual inspection",
+      "source_and_candidate_contact_samples": 20,
+      "full_resolution_candidate_samples": 4,
+      "subtitle_region_frames_reviewed": 300,
+      "subtitle_region_pixels": {
+        "x": 400,
+        "y": 590,
+        "width": 450,
+        "height": 100
+      },
+      "recognizable_chinese_residue_observed": false,
+      "four_korean_cues_match_references": true,
+      "obvious_patch_rectangle_observed": false,
+      "sampled_subject_or_background_drift_observed": false,
+      "ai_generation_mark_preserved": true,
+      "human_approval_recorded": false,
+      "limits": [
+        "Frame-sheet review does not replace real-time playback quality judgment.",
+        "Full-frame visual comparison was sampled; all-frame visual review was limited to the subtitle region.",
+        "Video was re-encoded; pixel identity is not claimed."
+      ]
+    },
+    "non_subtitle_metrics": {
+      "performed": true,
+      "frames_compared": 300,
+      "excluded_y_band_pixels": [
+        464,
+        680
+      ],
+      "included_fraction": 0.7,
+      "psnr_average_db": 47.908423,
+      "ssim_all": 0.994032,
+      "scope": "full-width top and bottom bands, all frames",
+      "exclusion_reason": "union of erase boxes plus four font heights above and 12 pixels below, full width"
+    },
+    "final_ocr_status": "manual_review_required_ocr_language_limit"
+  },
+  "known_limitations": [
+    "Official MediaKit OCR supports Simplified Chinese and English, not Korean.",
+    "Codex native fresh connection reports rc21 but cached tool catalog still exposes 8 prior tools; direct stdio handshake exposes all 11."
+  ],
+  "official_ocr_language_source": "https://docs.volcengine.com/docs/intelligent-processing/video-ocr-guide?lang=zh"
+}

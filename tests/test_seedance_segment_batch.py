@@ -152,9 +152,6 @@ class SeedanceSegmentBatchTests(unittest.TestCase):
         self.assertTrue(row["technical_review"]["source_audio_reused"])
         self.assertTrue(all(part["technical_review"]["checks"]["generated_audio_absent"]
                             for part in child["videos"]))
-        self.hunyuan.assert_not_called()
-        self.controller.assert_not_called()
-        self.executor.assert_not_called()
         for path in Path(result["directory"]).rglob("*.json"):
             self.assertNotIn("synthetic-test-key", path.read_text(encoding="utf-8"))
 
@@ -179,6 +176,30 @@ class SeedanceSegmentBatchTests(unittest.TestCase):
         self.client.create_edit.assert_not_called()
         self.client.get_task.assert_not_called()
         self.assertEqual(self.child_report(second)["videos"][1]["status"], "not_processed")
+        self.join.assert_not_called()
+
+    def test_both_policy_failures_reach_parent_and_resume_does_not_regenerate(self):
+        code = "OutputVideoSensitiveContentDetected.PolicyViolation"
+        self.client.get_task.side_effect = lambda task_id: {
+            "id": task_id, "status": "failed", "error_code": code,
+            "message": "平台版权检查拒绝生成，原任务已保留。"}
+        first = self.convert()
+        before = len(self.client.mock_calls)
+        resumed = batch.resume(first["directory"])
+        for result in (first, resumed):
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["outputs"], [])
+            parent = result["videos"][0]
+            self.assertEqual(parent["remote_error_code"], code)
+            self.assertEqual([part["remote_error_code"] for part in parent["segment_tasks"]], [code, code])
+            self.assertEqual([part["task_id"] for part in parent["segment_tasks"]], ["cgt-1", "cgt-2"])
+            self.assertFalse(parent["human_approved"])
+        self.assertEqual(self.client.create_edit.call_count, 2)
+        self.assertEqual(self.client.upload_video.call_count, 2)
+        self.assertEqual(self.client.get_task.call_count, 4)
+        self.assertEqual([call[0] for call in self.client.mock_calls[before:]], ["get_task", "get_task"])
+        self.client.download.assert_not_called()
+        self.review.assert_not_called()
         self.join.assert_not_called()
 
     def test_endpoint_20_uses_two_segments_with_same_id_and_explicit_family(self):

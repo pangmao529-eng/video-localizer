@@ -5,9 +5,12 @@ import math
 import socket
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, build_opener
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 
-from .model import _NoRedirect
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 MAX_PROBE_BYTES = 1024 * 1024
 
@@ -46,7 +49,7 @@ def check_api(*, timeout=60, cancelled=None):
         body = json.loads(payload)
         if (not isinstance(body, dict) or not isinstance(body.get("items"), list)):
             raise ValueError("unexpected response")
-        result.update(status="passed", authentication_verified=True, video_workflow_ready=True,
+        result.update(status="passed", authentication_verified=True,
                       message="Seedance 视频任务查询接口鉴权通过；尚未验证模型开通或视频生成。")
     except HTTPError as error:
         result["http_status"] = error.code

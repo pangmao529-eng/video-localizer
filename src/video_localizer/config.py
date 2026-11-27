@@ -4,6 +4,8 @@ import ctypes
 from ctypes import wintypes as wt
 import getpass
 import hashlib
+import hmac
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -13,7 +15,6 @@ import sys
 import tempfile
 from urllib.parse import urlsplit, urlunsplit
 
-from .hunyuan import ALLOWED_MODELS, DEFAULT_ENDPOINT, DEFAULT_MODEL
 from .persistence import atomic_replace
 
 
@@ -27,8 +28,6 @@ _SEEDANCE_FAMILIES = {SEEDANCE_20_MODEL: SEEDANCE_20_FAMILY,
                       SEEDANCE_25_MODEL: SEEDANCE_25_FAMILY}
 _ARK_ENDPOINT_ID = re.compile(r"ep-[A-Za-z0-9][A-Za-z0-9_-]{0,123}")
 PROVIDERS = {
-    "hunyuan": {"base_url": DEFAULT_ENDPOINT, "model": DEFAULT_MODEL,
-                "models": ALLOWED_MODELS},
     "seedance": {"base_url": SEEDANCE_DEFAULT_ENDPOINT, "model": SEEDANCE_DEFAULT_MODEL,
                  "models": frozenset({SEEDANCE_20_MODEL, SEEDANCE_25_MODEL})},
 }
@@ -108,38 +107,27 @@ def _provider_for_model(model, provider=None):
     if not isinstance(model, str):
         raise SettingsError("请填写受支持的模型 ID。")
     name = model.strip()
-    if provider is None:
-        provider = ("seedance" if _ARK_ENDPOINT_ID.fullmatch(name) else
-                    next((key for key, value in PROVIDERS.items() if name in value["models"]), None))
-    if not isinstance(provider, str) or provider not in PROVIDERS:
-        raise SettingsError("模型提供方须为 hunyuan 或 seedance，且须使用该提供方支持的模型 ID。")
-    if name not in PROVIDERS[provider]["models"] and not (provider == "seedance" and _ARK_ENDPOINT_ID.fullmatch(name)):
-        supported = " / ".join(sorted(PROVIDERS[provider]["models"]))
-        raise SettingsError(f"{provider} 配置仅支持模型：{supported}。")
-    return provider
+    if provider not in (None, "seedance"):
+        raise SettingsError("此发行版仅支持 Seedance，请使用 Seedance 模型配置。")
+    if name not in PROVIDERS["seedance"]["models"] and not _ARK_ENDPOINT_ID.fullmatch(name):
+        raise SettingsError("请填写受支持的 Seedance 模型 ID 或有效的 ep- 推理接入点 ID。")
+    return "seedance"
 
 
-def _nonsecret_configuration(data, *, legacy=False):
+def _nonsecret_configuration(data):
     if not isinstance(data, dict):
         raise SettingsError("模型配置格式无效。")
     model = data.get("model")
-    # Old files omitted provider; supported model IDs still identify it without
-    # forcing a newly saved Ark endpoint into the legacy Hunyuan branch.
     provider = _provider_for_model(model, data.get("provider"))
     endpoint = validated_endpoint(data.get("base_url"))
-    hostname = urlsplit(endpoint).hostname
-    for other, defaults in PROVIDERS.items():
-        if other != provider and hostname == urlsplit(defaults["base_url"]).hostname:
-            raise SettingsError("模型提供方与官方 API 地址不匹配，请使用对应平台的地址和密钥。")
+    if urlsplit(endpoint).scheme != "https":
+        raise SettingsError("Seedance API 地址须为 HTTPS 基础地址。")
+    if urlsplit(endpoint).hostname == "tokenhub.tencentmaas.com":
+        raise SettingsError("Seedance 模型不能使用旧提供方的 API 地址。")
     clean = {"provider": provider, "base_url": endpoint, "model": model.strip()}
-    if provider == "seedance":
-        family = seedance_family(clean["model"], data.get("model_family"))
-        # Keep legacy direct-model profiles byte-shape compatible. Deployments
-        # always bind an explicit family so capability limits cannot be guessed.
-        if data.get("model_family") is not None or _ARK_ENDPOINT_ID.fullmatch(clean["model"]):
-            clean["model_family"] = family
-    elif data.get("model_family") is not None:
-        raise SettingsError("混元配置不接受 Seedance 系列字段。")
+    family = seedance_family(clean["model"], data.get("model_family"))
+    if data.get("model_family") is not None or _ARK_ENDPOINT_ID.fullmatch(clean["model"]):
+        clean["model_family"] = family
     return clean
 
 
@@ -149,28 +137,177 @@ def settings():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return _nonsecret_configuration(data, legacy=True)
+        return _nonsecret_configuration(data)
     except (OSError, ValueError, TypeError, KeyError):
-        raise SettingsError("模型配置无法读取；请使用受支持的混元或 Seedance 模型重新运行 setup。") from None
+        raise SettingsError("模型配置无法读取或属于旧提供方；请重新运行 Seedance setup。") from None
 
 
-def _profiles():
-    path = app_dir() / "profiles.json"
+def _read_configuration_file(name):
+    path = app_dir() / name
     if not path.exists():
         return {}
     try:
+        if path.stat().st_size > 65536:
+            raise ValueError()
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError()
-        profiles = {}
-        for provider, profile in data.items():
-            clean = _nonsecret_configuration(profile, legacy=True)
-            if provider != clean["provider"]:
-                raise ValueError()
-            profiles[provider] = clean
-        return profiles
+        return data
     except (OSError, ValueError, TypeError, KeyError):
-        raise SettingsError("已保存的模型配置档案无法读取；请先修复 profiles.json，以免覆盖原配置。") from None
+        raise SettingsError("已保存的配置档案无法读取，请先修复该配置文件，避免覆盖原记录。") from None
+
+
+def _legacy_configuration(data):
+    """Read-only allowlist for archiving; never enables a legacy provider."""
+    if (not isinstance(data, dict) or data.get("provider", "hunyuan") != "hunyuan"
+            or data.get("model") not in {"hy4", "hy4-flash"}):
+        raise SettingsError("旧配置档案格式无效，未覆盖原记录。")
+    return {"provider": "hunyuan", "base_url": validated_endpoint(data.get("base_url")),
+            "model": data["model"]}
+
+
+def _profile_records():
+    active, legacy = {}, []
+    for provider, profile in _read_configuration_file("profiles.json").items():
+        if provider == "seedance":
+            active[provider] = _nonsecret_configuration(profile)
+        elif provider == "hunyuan":
+            legacy.append(_legacy_configuration(profile))
+        else:
+            raise SettingsError("配置档案包含未知提供方，未覆盖原记录。")
+    return active, legacy
+
+
+def _profiles():
+    # Old provider records must not prevent opening a usable Seedance profile.
+    # Their validation and archival happen only when saving or migrating.
+    value = _read_configuration_file("profiles.json").get("seedance")
+    return {"seedance": _nonsecret_configuration(value)} if value is not None else {}
+
+
+def _migration_plan():
+    active, legacy = _profile_records()
+    current = _read_configuration_file("settings.json")
+    legacy_current = bool(current and (current.get("provider") == "hunyuan"
+                                      or current.get("model") in {"hy4", "hy4-flash"}))
+    if current:
+        if legacy_current:
+            legacy.append(_legacy_configuration(current))
+        else:
+            active["seedance"] = _nonsecret_configuration(current)
+    archived = {}
+    existing = _read_configuration_file("legacy-profiles.json")
+    for entry in [*existing.values(), *legacy]:
+        clean = _legacy_configuration(entry)
+        name = clean["provider"]
+        if name in archived and archived[name] != clean:
+            name += "-" + hashlib.sha256(json.dumps(clean, sort_keys=True).encode()).hexdigest()[:12]
+        archived[name] = clean
+    return active, archived, legacy_current
+
+
+def migrate_legacy_profiles():
+    """Archive nonsecret legacy profiles; never read, delete or rewrite vault keys."""
+    active, archived, legacy_current = _migration_plan()
+    if archived:
+        write_json(app_dir() / "legacy-profiles.json", archived)
+    write_json(app_dir() / "profiles.json", active)
+    if legacy_current:
+        (app_dir() / "settings.json").unlink()
+    return {"legacy_profiles_archived": len(archived), "active_providers": sorted(active)}
+
+
+def validated_media_endpoint(value, ark_endpoint=None):
+    """Check a public HTTPS staging origin without DNS or credential reads."""
+    try:
+        if not isinstance(value, str):
+            raise ValueError()
+        endpoint = value.strip().rstrip("/")
+        parsed = urlsplit(endpoint)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if (parsed.scheme != "https" or not host or parsed.port not in (None, 443)
+                or parsed.username is not None or parsed.password is not None
+                or "?" in endpoint or "#" in endpoint or parsed.path != "/codex-media/v1"
+                or "\\" in endpoint or "%" in host
+                or any(ord(c) < 33 or ord(c) > 126 for c in endpoint)
+                or host == "localhost" or "." not in host
+                or host.endswith((".localhost", ".local", ".internal"))
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)):
+            raise ValueError()
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and (not address.is_global or address.is_multicast):
+            raise ValueError()
+        if address is None and (all(part.isdigit() for part in host.split("."))
+                                or any(not part or len(part) > 63 for part in host.split("."))):
+            raise ValueError()
+        ark_hosts = {urlsplit(SEEDANCE_DEFAULT_ENDPOINT).hostname}
+        if ark_endpoint:
+            ark_hosts.add(urlsplit(validated_endpoint(ark_endpoint)).hostname.lower().rstrip("."))
+        if host in ark_hosts or (host.startswith("ark.") and host.endswith(".volces.com")):
+            raise ValueError()
+        return endpoint
+    except (ValueError, TypeError):
+        raise SettingsError("素材服务器须为独立公网 HTTPS 地址，路径为 /codex-media/v1，不能使用模型 API 的主机。") from None
+
+
+def media_settings():
+    value = _read_configuration_file("media-upload.json")
+    if not value:
+        return None
+    if set(value) != {"provider", "endpoint"} or value.get("provider") != "self_hosted":
+        raise SettingsError("自有素材服务器配置无效，请重新保存上传服务配置。")
+    return {"provider": "self_hosted", "endpoint": validated_media_endpoint(value.get("endpoint"))}
+
+
+def _checked_key(value):
+    if (not isinstance(value, str) or not 1 <= len(value) <= 2560
+            or any(ord(c) < 33 or ord(c) > 126 for c in value)):
+        raise SettingsError("密钥为空、过长或包含不支持的字符。")
+    return value
+
+
+def _resolved_key(endpoint, value):
+    if not isinstance(value, str):
+        raise SettingsError("密钥须为文本，留空沿用对应地址的已保存凭据。")
+    supplied = value.strip()
+    try:
+        return _checked_key(supplied or read_key(endpoint)), bool(supplied)
+    except SettingsError:
+        raise SettingsError("对应接口没有可用的已保存凭据，请填写该接口的独立密钥。") from None
+
+
+def _prepare_media(endpoint, key, ark_endpoint=None, ark_key=None):
+    endpoint = validated_media_endpoint(endpoint, ark_endpoint)
+    secret, supplied = _resolved_key(endpoint, key)
+    if secret.startswith("ark-") or (ark_key is not None and hmac.compare_digest(secret, ark_key)):
+        raise SettingsError("上传服务须使用独立凭据，不能填写或复用 Ark API Key。")
+    return {"provider": "self_hosted", "endpoint": endpoint}, secret, supplied
+
+
+def save_media_configuration(endpoint, key="", *, ark_endpoint=None):
+    """Save only staging settings; omitted key reuses that endpoint's vault item."""
+    try:
+        current = settings()
+    except SettingsError:
+        current = None
+    ark_endpoint = ark_endpoint or (current["base_url"] if current else None)
+    if ark_endpoint:
+        ark_endpoint = validated_endpoint(ark_endpoint)
+    endpoint = validated_media_endpoint(endpoint, ark_endpoint)
+    ark_key = None
+    if ark_endpoint:
+        try:
+            ark_key = _checked_key(read_key(ark_endpoint))
+        except SettingsError:
+            pass
+    clean, secret, supplied = _prepare_media(endpoint, key, ark_endpoint, ark_key)
+    if supplied:
+        _store_key(clean["endpoint"], secret)
+    write_json(app_dir() / "media-upload.json", clean)
+    return {"configured": True, "provider": "self_hosted", "connection_tested": False}
 
 
 class _Credential(ctypes.Structure):
@@ -226,9 +363,11 @@ def _store_key(endpoint, key):
 
 def _dialog(initial):
     script = (Path(__file__).parent / "configuration-dialog.ps1").read_text(encoding="utf-8")
+    media = media_settings() or {}
     env = dict(os.environ, VL_DIALOG_API=initial.get("base_url", ""),
-               VL_DIALOG_MODEL=initial.get("model", ""), VL_DIALOG_PROVIDER=initial.get("provider", "hunyuan"),
-               VL_DIALOG_FAMILY=initial.get("model_family", ""))
+               VL_DIALOG_MODEL=initial.get("model", ""),
+               VL_DIALOG_FAMILY=initial.get("model_family", ""),
+               VL_DIALOG_MEDIA_API=initial.get("media_endpoint", media.get("endpoint", "")))
     shell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     saved = None
     with subprocess.Popen([str(shell), "-STA", "-NoProfile", "-Command", script],
@@ -242,7 +381,10 @@ def _dialog(initial):
             except OSError:
                 reply = {"ok": False, "message": "保存失败。请检查当前用户的配置目录和 Windows 凭据管理器后重试。"}
             else:
-                reply = {"ok": True, "message": "模型配置已保存到本机，尚未测试连接；保存不会自动生成视频。"}
+                message = "Seedance 和独立素材上传配置已保存，尚未测试连接；不会自动生成视频。"
+                if not saved["media_configured"]:
+                    message = "Seedance 配置已保存；自有素材上传服务尚未配置，暂不能运行视频流程。"
+                reply = {"ok": True, "message": message}
             # PowerShell reads one reply per Save. ASCII framing also works in
             # Windows PowerShell installations that use a legacy input code page.
             window.stdin.write(json.dumps(reply, ensure_ascii=True) + "\n")
@@ -255,29 +397,26 @@ def _dialog(initial):
     return saved
 
 
-def configure(gui=False, endpoint=None, model=None, provider=None, model_family=None):
+def configure(gui=False, endpoint=None, model=None, provider=None, model_family=None, media_endpoint=None):
     try:
         previous = settings() or {}
     except SettingsError:
         previous = {}
-    selected = provider if provider is not None else (
-        _provider_for_model(model) if model is not None else previous.get("provider", "hunyuan"))
-    if not isinstance(selected, str) or selected not in PROVIDERS:
-        raise SettingsError("模型提供方须为 hunyuan 或 seedance。")
+    if provider not in (None, "seedance"):
+        raise SettingsError("此发行版仅支持 Seedance，请使用 Seedance 模型配置。")
     if model is not None:
-        _provider_for_model(model, selected)
-    saved = previous if previous.get("provider") == selected else (
-        _profiles().get(selected, {}) if previous else {})
-    default = {"provider": selected,
-               "base_url": endpoint or saved.get("base_url", PROVIDERS[selected]["base_url"]),
-               "model": model or saved.get("model", PROVIDERS[selected]["model"])}
+        _provider_for_model(model, provider)
+    saved = previous or _profiles().get("seedance", {})
+    default = {"provider": "seedance",
+               "base_url": endpoint or saved.get("base_url", SEEDANCE_DEFAULT_ENDPOINT),
+               "model": model or saved.get("model", SEEDANCE_DEFAULT_MODEL)}
     family = model_family
     if family is None and (model is None or model.strip() == saved.get("model")):
         family = saved.get("model_family")
     if family is not None:
-        if selected != "seedance":
-            raise SettingsError("混元配置不接受 Seedance 系列字段。")
         default["model_family"] = seedance_family(default["model"], family)
+    if media_endpoint is not None:
+        default["media_endpoint"] = validated_media_endpoint(media_endpoint, default["base_url"])
     if gui:
         return _dialog(default)
     if not sys.stdin.isatty():
@@ -286,13 +425,16 @@ def configure(gui=False, endpoint=None, model=None, provider=None, model_family=
     name = model or input(f"模型 ID [{default['model']}]: ").strip() or default["model"]
     family = model_family if model_family is not None else (
         default.get("model_family") if name.strip() == default["model"].strip() else None)
-    if selected == "seedance" and _ARK_ENDPOINT_ID.fullmatch(name.strip()) and family is None:
+    if _ARK_ENDPOINT_ID.fullmatch(name.strip()) and family is None:
         family = input("Seedance 系列（seedance-2.0 / seedance-2.5）: ").strip()
-    payload = {"provider": selected, "base_url": url, "model": name}
+    payload = {"provider": "seedance", "base_url": url, "model": name}
     if family is not None:
         payload["model_family"] = family
     _nonsecret_configuration(payload)
     payload["key"] = getpass.getpass("API Key（不回显，留空沿用该地址的凭据）: ")
+    if media_endpoint is not None:
+        payload["media_endpoint"] = media_endpoint
+        payload["media_key"] = getpass.getpass("素材上传 Key（必须独立于 Ark，留空沿用该地址的凭据）: ")
     return _save_configuration(payload)
 
 
@@ -301,31 +443,38 @@ def _save_configuration(data):
         raise SettingsError("请填写 API 地址、模型 ID 和密钥。")
     clean = _nonsecret_configuration(data)
     url = clean["base_url"]
-    profiles = _profiles()
-    try:
-        previous = settings()
-    except SettingsError:
-        previous = None
-    if previous:
-        profiles[previous["provider"]] = previous
-    for provider, profile in profiles.items():
-        if provider != clean["provider"] and profile["base_url"] == url:
+    profiles, archived, _ = _migration_plan()
+    for profile in archived.values():
+        if _target(profile["base_url"]) == _target(url):
             raise SettingsError("该 API 地址已有另一提供方的凭据配置，请使用独立地址，避免覆盖原密钥。")
-    key = data["key"].strip()
-    if not key:
-        try:
-            read_key(url)
-        except SettingsError:
-            raise SettingsError("该接口尚无已保存的 API Key，请填写密钥后再保存。") from None
-    # Keep a recoverable, allowlisted copy before replacing the active provider.
-    # Endpoint-based vault targets remain unchanged for legacy Hy4 credentials.
+    explicit_media = "media_endpoint" in data
+    if "media_key" in data and not explicit_media:
+        raise SettingsError("保存上传密钥时必须同时指定独立素材服务器地址。")
+    # Validate fields, both independent credentials, and migration inputs before
+    # writing any configuration or replacing a vault entry.
+    media = ({"endpoint": validated_media_endpoint(data["media_endpoint"], url)}
+             if explicit_media else media_settings())
+    if media:
+        validated_media_endpoint(media["endpoint"], url)
+    key, supplied = _resolved_key(url, data["key"])
+    media_key, media_supplied = None, False
+    if media:
+        media, media_key, media_supplied = _prepare_media(
+            media["endpoint"], data.get("media_key", ""), url, key)
+    # Archive only allowlisted nonsecret legacy fields; old vault targets stay.
+    if archived:
+        write_json(app_dir() / "legacy-profiles.json", archived)
+    if supplied:
+        _store_key(url, key)
+    if media_supplied:
+        _store_key(media["endpoint"], media_key)
     profiles[clean["provider"]] = clean
     write_json(app_dir() / "profiles.json", profiles)
-    if key:
-        _store_key(url, key)
     write_json(app_dir() / "settings.json", clean)
+    if explicit_media:
+        write_json(app_dir() / "media-upload.json", media)
     result = {"configured": True, "provider": clean["provider"], "model": clean["model"],
-              "connection_tested": False}
+              "connection_tested": False, "media_configured": media is not None}
     if "model_family" in clean:
         result["model_family"] = clean["model_family"]
     return result

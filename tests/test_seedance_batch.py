@@ -34,6 +34,7 @@ class SeedanceBatchTests(unittest.TestCase):
                       "videoCodec": "h264", "audioCodec": "aac",
                       "constantFrameRate": True}
         self.client = MagicMock(spec=seedance_client.SeedanceClient)
+        self.media_config = self.patch("video_localizer.selfhost_media.configuration", return_value=None)
         self.client.upload_video.side_effect = self.upload
         self.client.get_file.side_effect = self.get_file
         self.client.create_edit.side_effect = self.create_edit
@@ -43,12 +44,6 @@ class SeedanceBatchTests(unittest.TestCase):
         self.patch("video_localizer.batch._connection", return_value=self.connection)
         self.patch("video_localizer.batch.app_dir", return_value=self.root / "app")
         self.patch("video_localizer.batch.read_key", side_effect=AssertionError("No credential reads in tests"))
-        self.hunyuan = self.patch("video_localizer.hunyuan.HunyuanClient",
-                                  side_effect=AssertionError("Seedance must not call Hy4"))
-        self.controller = self.patch("video_localizer.controller.HunyuanController",
-                                     side_effect=AssertionError("Seedance must not start the Hy4 controller"))
-        self.executor = self.patch("video_localizer.executor.VideoExecutor",
-                                   side_effect=AssertionError("No local video editing in Seedance"))
         self.probe = self.patch("video_localizer.seedance_batch.engine.probe", side_effect=self.probe_media)
         self.command = self.patch("video_localizer.seedance_batch.engine.command", side_effect=self.media_command)
         self.patch("video_localizer.seedance_batch._wait")
@@ -122,9 +117,6 @@ class SeedanceBatchTests(unittest.TestCase):
         result = self.convert()
         self.assertEqual([name for name, _value in self.events],
                          ["upload", "file", "submit", "poll", "download", "review"])
-        self.hunyuan.assert_not_called()
-        self.controller.assert_not_called()
-        self.executor.assert_not_called()
         row = result["videos"][0]
         self.assertEqual(result["status"], "needs_review")
         self.assertEqual(row["status"], "needs_review")
@@ -145,6 +137,23 @@ class SeedanceBatchTests(unittest.TestCase):
         self.assertEqual(self.client.create_edit.call_args.kwargs["reference_images"], [])
         for path in Path(result["directory"]).rglob("*.json"):
             self.assertNotIn("synthetic-test-key", path.read_text(encoding="utf-8"))
+
+    def test_private_server_transport_keeps_signed_url_out_of_checkpoint(self):
+        self.media_config.return_value = {"provider":"self_hosted", "endpoint":"https://example.com/codex-media/v1"}
+        transport = MagicMock()
+        transport.ensure_uploaded.side_effect = lambda path, sha: {"id":sha,"sha256":sha,"bytes":Path(path).stat().st_size}
+        signed = "https://example.com/codex-media/v1/objects/test.mp4?signature=secret-test-signature"
+        transport.reference.return_value = signed
+        self.patch("video_localizer.selfhost_media.MediaClient", return_value=transport)
+        result = self.convert()
+        self.assertEqual(result["status"], "needs_review")
+        self.client.upload_video.assert_not_called()
+        self.client.get_file.assert_not_called()
+        self.assertEqual(self.client.create_edit.call_args.args[0], signed)
+        stored = self.stored(result)
+        self.assertEqual(stored["media_backend"], self.media_config.return_value)
+        self.assertEqual(stored["videos"][0]["media_upload"]["sha256"], hashlib.sha256(self.sources[0].read_bytes()).hexdigest())
+        self.assertNotIn("secret-test-signature", json.dumps(stored))
 
     def test_endpoint_25_retains_full_video_workflow_and_pins_family(self):
         endpoint_id = "ep-20261126155948-example"
@@ -194,6 +203,27 @@ class SeedanceBatchTests(unittest.TestCase):
         self.assertEqual(self.client.get_file.call_count, 1)
         self.assertEqual(self.client.create_edit.call_count, 1)
         self.assertEqual({call.args[0] for call in self.client.get_task.call_args_list}, {"cgt-1"})
+
+    def test_policy_rejection_resume_only_queries_original_task_without_new_generation(self):
+        code = "OutputVideoSensitiveContentDetected.PolicyViolation"
+        self.client.get_task.side_effect = lambda task_id: {
+            "id": task_id, "status": "failed", "error_code": code,
+            "message": "平台拒绝生成；保留原任务。"}
+        first = self.convert()
+        before = len(self.client.mock_calls)
+        resumed = batch.resume(first["directory"])
+        for result in (first, resumed):
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["outputs"], [])
+            self.assertFalse(result["human_approved"])
+            self.assertEqual(result["videos"][0]["remote_error_code"], code)
+            self.assertEqual(result["videos"][0]["task_id"], "cgt-1")
+        self.assertEqual(self.client.create_edit.call_count, 1)
+        self.assertEqual(self.client.upload_video.call_count, 1)
+        self.assertEqual(self.client.get_task.call_count, 2)
+        self.assertEqual([call[0] for call in self.client.mock_calls[before:]], ["get_task"])
+        self.client.download.assert_not_called()
+        self.review.assert_not_called()
 
     def test_cancel_after_submission_is_resumable_without_resubmission(self):
         cancellation = {"requested": False}
@@ -316,8 +346,6 @@ class SeedanceBatchTests(unittest.TestCase):
         with self.assertRaisesRegex(config.SettingsError, "旧混元断点"):
             batch.resume(folder)
         self.factory.assert_not_called()
-        self.hunyuan.assert_not_called()
-        self.controller.assert_not_called()
 
     def test_pending_review_does_not_block_next_video_and_execution_is_serial(self):
         result = self.convert(count=3)

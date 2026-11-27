@@ -41,15 +41,27 @@ class StdioProtocolTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["serverInfo"]["version"], __version__)
         names = {tool["name"] for tool in replies[1]["result"]["tools"]}
         self.assertEqual(names, {"check_setup", "open_model_configuration", "check_model", "convert_videos",
-                                 "resume_batch", "submit_review", "cancel_batch", "batch_progress"})
+                                 "resume_batch", "submit_review", "cancel_batch", "batch_progress",
+                                 "check_mediakit_setup", "convert_subtitles", "resume_subtitles"})
         setup = json.loads(replies[2]["result"]["content"][0]["text"])
         self.assertFalse(setup["model_contacted"])
         self.assertFalse(setup["model_configured"])
-        self.assertEqual(setup["workflow"], "hunyuan_controller")
+        self.assertEqual(setup["workflow"], "seedance_video_api")
+        self.assertEqual(setup["distribution"], "seedance-only")
+        self.assertFalse(setup["video_workflow_ready"])
+        self.assertFalse(setup["media_upload_configured"])
+        self.assertFalse(setup["media_server_contacted"])
         self.assertEqual(setup["running_version"], replies[0]["result"]["serverInfo"]["version"])
         self.assertGreater(setup["process_id"], 0)
         self.assertIsNone(setup["runtime_revision"], "Source tests must not claim an installed revision")
-        self.assertRegex(setup["quality_policy_sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(setup["prompt_revision"])
+        self.assertNotIn("quality_policy_sha256", setup)
+        tools = {tool["name"]: tool["inputSchema"] for tool in replies[1]["result"]["tools"]}
+        self.assertEqual(tools["convert_videos"]["properties"]["profile"]["enum"], ["source"])
+        self.assertEqual(set(tools["check_model"]["properties"]), {"timeout"})
+        review = tools["submit_review"]["properties"]["decision"]
+        self.assertEqual(review["properties"]["action"]["enum"], ["keep", "reject"])
+        self.assertFalse(review["additionalProperties"])
 
     def test_unknown_method_is_a_protocol_error_not_a_traceback(self):
         reply = self.exchange([{"jsonrpc": "2.0", "id": 4, "method": "not-a-method"}])[0]

@@ -1,7 +1,8 @@
-"""Persistent, one-at-a-time Hunyuan video batches shared by CLI and MCP."""
+"""Persistent Seedance video batches shared by CLI and MCP."""
 
 from contextlib import contextmanager
 import hashlib
+import hmac
 import importlib.util
 import json
 import os
@@ -13,12 +14,11 @@ import time
 
 from .config import app_dir, read_key, settings, SettingsError, write_json, seedance_family
 from . import __version__
-from .quality_rules import QUALITY_POLICY_REVISION, QUALITY_RULES
 
 
 STOP_STATES = {"paused_error", "paused_budget", "cancelled"}
 PARAMETER_KEYS = {"target", "source_language", "profile", "translations", "glossary", "references", "request", "max_turns"}
-ANALYSIS_FIELDS = ("phase", "read_only_turns", "compactions", "output_recoveries")
+ANALYSIS_FIELDS = ("phase",)
 
 
 def runtime_paths():
@@ -61,30 +61,46 @@ def _running_revision():
 
 
 def doctor():
+    from .seedance_batch import PROMPT_REVISION
+    from .selfhost_media import configuration as media_configuration
     paths = runtime_paths()
     dependencies = {key: bool(path and path.is_file()) for key, path in paths.items()}
     for module in ("cv2", "numpy", "PIL"):
         dependencies[module] = importlib.util.find_spec(module) is not None
     data, error, configured = None, None, False
+    model_key = None
+    media, media_error, media_ready = None, None, False
     try:
         data = settings()
         if data:
-            configured = bool(read_key(data["base_url"]))
+            model_key = read_key(data["base_url"])
+            configured = data.get("provider") == "seedance" and bool(model_key)
     except SettingsError as exc:
         error = str(exc)
-    provider = data.get("provider", "hunyuan") if data else None
+    try:
+        media = media_configuration()
+        if media:
+            from .config import validated_media_endpoint
+            validated_media_endpoint(media["endpoint"], data["base_url"] if data else None)
+            media_key = read_key(media["endpoint"])
+            if media_key.startswith("ark-") or (model_key and hmac.compare_digest(media_key, model_key)):
+                raise SettingsError("素材上传凭据须与 Ark API Key 分开。")
+            media_ready = bool(media_key)
+    except SettingsError as exc:
+        media_error = str(exc)
     return {"runtime_ready": all(dependencies.values()), "dependencies": dependencies,
-            "provider": provider, "video_workflow_ready": bool(configured and provider in {"hunyuan", "seedance"}),
-            "automatic_visual_review_available": provider == "hunyuan",
+            "provider": "seedance", "video_workflow_ready": bool(configured and media_ready and all(dependencies.values())),
+            "automatic_visual_review_available": False,
             "model_configured": configured, "model": data["model"] if data else None,
-            "model_family": seedance_family(data["model"], data.get("model_family")) if provider == "seedance" else None,
+            "model_family": seedance_family(data["model"], data.get("model_family")) if data and configured else None,
             "endpoint": data["base_url"] if data else None, "configuration_error": error,
-            "model_contacted": False,
-            "workflow": "seedance_video_api" if provider == "seedance" else "hunyuan_controller",
+            "media_backend": media, "media_upload_configured": media_ready,
+            "media_configuration_error": media_error,
+            "model_contacted": False, "media_server_contacted": False,
+            "workflow": "seedance_video_api", "distribution": "seedance-only",
+            "new_seedance20_processing_backend": "server-v1", "server_processing_contacted": False,
             "running_version": __version__, "process_id": os.getpid(),
-            "runtime_revision": _running_revision(),
-            "quality_policy_revision": QUALITY_POLICY_REVISION,
-            "quality_policy_sha256": hashlib.sha256(QUALITY_RULES.encode("utf-8")).hexdigest()}
+            "runtime_revision": _running_revision(), "prompt_revision": PROMPT_REVISION}
 
 
 @contextmanager
@@ -151,15 +167,15 @@ def expand_inputs(inputs):
 def _parameters(params):
     if not isinstance(params, dict) or set(params) != PARAMETER_KEYS:
         raise ValueError("批次参数不完整或包含不支持的字段。")
-    if params["profile"] not in {"source", "2k120"}:
-        raise ValueError("输出规格须为 source 或 2k120。")
+    if params["profile"] != "source":
+        raise ValueError("Seedance 仅支持 source 规格，不支持 2K/120。")
     for language in (params["target"], params["source_language"]):
         if not isinstance(language, str) or not language.strip() or len(language) > 80:
             raise ValueError("请填写有效语言名称。")
     if not isinstance(params["request"], str) or len(params["request"]) > 32000:
         raise ValueError("原始要求需要是最多 32000 字符的文本。")
     if type(params["max_turns"]) is not int or not 1 <= params["max_turns"] <= 200:
-        raise ValueError("max_turns 取值为 1–200，表示每条视频每次运行的模型轮数上限。")
+        raise ValueError("max_turns 取值为 1–200，表示每条视频本次运行的状态查询次数上限。")
     for key in ("translations", "glossary", "references"):
         if params[key] is not None:
             if not isinstance(params[key], (str, os.PathLike)) or not str(params[key]).strip():
@@ -169,12 +185,20 @@ def _parameters(params):
 
 
 def _connection():
+    from .selfhost_media import configuration as media_configuration
     data = settings()
-    if not data:
-        raise SettingsError("请先运行 video-localizer setup --gui 保存模型配置。")
-    if data.get("provider", "hunyuan") not in {"hunyuan", "seedance"}:
-        raise SettingsError("不支持当前模型提供方；不会自动切换平台。")
+    if not data or data.get("provider") != "seedance":
+        raise SettingsError("请先运行 video-localizer setup --gui 保存 Seedance 配置。")
+    media = media_configuration()
+    if not media:
+        raise SettingsError("请先在配置窗口保存自有素材服务器地址与独立上传凭据。")
+    # Check both distinct credential targets before creating a batch; no API call.
+    from .config import validated_media_endpoint
+    validated_media_endpoint(media["endpoint"], data["base_url"])
+    media_key = read_key(media["endpoint"])
     key = read_key(data["base_url"])
+    if not key or not media_key or media_key.startswith("ark-") or hmac.compare_digest(media_key, key):
+        raise SettingsError("素材上传凭据须与 Ark API Key 分开且均不能为空。")
     paths = runtime_paths()
     missing = [name for name, path in paths.items() if not path or not path.is_file()]
     if missing:
@@ -188,32 +212,12 @@ def _load_batch(batch_dir):
     if not path.is_file() or path.is_symlink() or path.stat().st_size > 32 * 1024**2:
         raise ValueError("找不到有效批次记录。")
     data = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(data, dict) and data.get("schema") == 3:
-        from .seedance_batch import validate_report
-        return validate_report(folder, data)
-    if not isinstance(data, dict) or data.get("schema") != 2 or data.get("directory") != str(folder):
-        raise ValueError("批次格式或目录不匹配；本版只能恢复新版混元批次。")
-    if data.get("model") not in {"hy4", "hy4-flash"} or not isinstance(data.get("endpoint"), str):
-        raise ValueError("批次混元连接记录无效。")
-    _parameters(data.get("params", {}))
-    rows = data.get("videos")
-    if not isinstance(rows, list) or not 1 <= len(rows) <= 20:
-        raise ValueError("批次视频清单无效。")
-    for index, row in enumerate(rows, 1):
-        expected = folder / "videos" / f"{index:03d}"
-        if (not isinstance(row, dict) or row.get("index") != index
-                or row.get("work_dir") != str(expected) or expected.resolve() != expected
-                or not isinstance(row.get("source"), str) or not Path(row["source"]).is_absolute()
-                or row.get("status") not in {"ready", "processing", "not_processed", "failed", "completed", "needs_review", *STOP_STATES}
-                or not isinstance(row.get("issues", []), list)):
-            raise ValueError("批次工作目录或原片路径无效。")
-        for artifact in (row.get("output"), row.get("preview")):
-            if artifact:
-                try:
-                    Path(artifact).resolve().relative_to(expected)
-                except (TypeError, ValueError):
-                    raise ValueError("批次产物路径超出当前视频工作目录。") from None
-    return folder, data
+    if isinstance(data, dict) and data.get("schema") == 2:
+        raise SettingsError("旧混元断点不能在 Seedance 专用版续跑；旧安装版本和断点可独立保留。")
+    if not isinstance(data, dict) or data.get("schema") != 3:
+        raise ValueError("本版只接受 Seedance schema 3 批次。")
+    from .seedance_batch import validate_report
+    return validate_report(folder, data)
 
 
 def _persist(folder, report):
@@ -241,81 +245,10 @@ def _summary(report):
 
 
 def _run(folder, report, connection, progress, cancelled):
-    if report.get("provider") == "seedance":
-        from .seedance_batch import run
-        return run(folder, report, connection, progress, cancelled)
-    if connection[0].get("provider", "hunyuan") != "hunyuan":
-        raise SettingsError("旧混元断点不能在 Seedance 配置下续跑，请对原片新建 Seedance 批次。")
-    from .controller import HunyuanController
-    from .executor import VideoExecutor, ExecutorCancelled
-    from .hunyuan import HunyuanClient
-    from .materials import load_materials
-    from .model import ModelError
-    data, api_key, options = connection
-    if report["model"] != data["model"] or report["endpoint"] != data["base_url"]:
-        raise SettingsError("已保存的模型或端点与原批次不同，请恢复原配置后续跑。")
-    params = report["params"]
-    options["profile"] = params["profile"]
-    materials = load_materials(**{key: params[key] for key in ("translations", "glossary", "references")})
-    emit, is_cancelled = progress or (lambda event: None), cancelled or (lambda: False)
-    started, elapsed = time.monotonic(), float(report.get("elapsed_seconds", 0))
-    report["status"] = "processing"
-    _persist(folder, report)
-    emit({"stage": "batch_started", "batch_dir": str(folder), "total": len(report["videos"])})
-    stopped = None
-    for row in report["videos"]:
-        if row["status"] == "completed":
-            continue
-        if is_cancelled():
-            stopped = "cancelled"
-            break
-        base = {"index": row["index"], "total": len(report["videos"]),
-                "filename": Path(row["source"]).name, "batch_dir": str(folder)}
-        row["status"] = "processing"
-        _persist(folder, report)
-        emit({**base, "stage": "start"})
-        try:
-            executor = VideoExecutor(row["source"], row["work_dir"], options=options,
-                                     materials=materials, cancelled=is_cancelled)
-            client = HunyuanClient(data["base_url"], data["model"], api_key)
-            controller = HunyuanController(client, executor, row["work_dir"], request=params["request"],
-                target=params["target"], source_language=params["source_language"], max_turns=params["max_turns"],
-                progress=lambda event: emit({**event, **base}), cancelled=is_cancelled)
-            item = controller.run()
-            if item.get("status") not in {"completed", "needs_review", *STOP_STATES}:
-                raise RuntimeError("控制器返回了未知状态。")
-            if item.get("output") and not Path(item["output"]).is_file():
-                raise RuntimeError("视频处理报告与磁盘输出不一致。")
-            for artifact in (item.get("output"), item.get("preview")):
-                if artifact:
-                    try:
-                        Path(artifact).resolve().relative_to(Path(row["work_dir"]))
-                    except (TypeError, ValueError):
-                        raise RuntimeError("视频产物路径超出当前工作目录。") from None
-            row.update(item)
-        except ExecutorCancelled:
-            row.update(status="cancelled", output=None, message="任务已取消，可从检查点继续。")
-        except ModelError as exc:
-            row.update(status="paused_error", output=None, error_code=exc.code, message=str(exc))
-        except (ValueError, RuntimeError, OSError) as exc:
-            row.update(status="failed", output=None, message=str(exc).replace(api_key, "[redacted]")[:2000])
-        row.setdefault("human_approved", False)
-        row.setdefault("model_reviewed", False)
-        write_json(Path(row["work_dir"]) / "review.json", row)
-        report["elapsed_seconds"] = round(elapsed + time.monotonic() - started, 2)
-        if row["status"] in STOP_STATES:
-            stopped = row["status"]
-        _persist(folder, report)
-        emit({**base, "stage": "finished_file", "status": row["status"],
-              **{key: row.get(key) for key in ("error_code", "message", *ANALYSIS_FIELDS)}})
-        if stopped:
-            break
-    report["status"] = stopped or ("needs_review" if any(row["status"] == "needs_review" for row in report["videos"])
-                                   else "failed" if any(row["status"] == "failed" for row in report["videos"])
-                                   else "completed")
-    report["elapsed_seconds"] = round(elapsed + time.monotonic() - started, 2)
-    _persist(folder, report)
-    return _summary(report)
+    if report.get("provider") != "seedance" or connection[0].get("provider") != "seedance":
+        raise SettingsError("本版仅运行 Seedance 批次，不调用旧模型提供方。")
+    from .seedance_batch import run
+    return run(folder, report, connection, progress, cancelled)
 
 
 def convert(inputs, output_dir, *, target="韩语", source_language="auto", profile="source",
@@ -328,22 +261,23 @@ def convert(inputs, output_dir, *, target="韩语", source_language="auto", prof
     files = expand_inputs(inputs)
     with batch_lock():
         connection = _connection()
-        provider = connection[0].get("provider", "hunyuan")
-        if provider == "seedance":
-            from .seedance_batch import prepare
-            prepare(params, connection[0]["model"], connection[0].get("model_family"))  # Validate before creating or uploading a batch.
+        from .seedance_batch import prepare
+        from .selfhost_media import binding
+        prepare(params, connection[0]["model"], connection[0].get("model_family"))
+        media_backend = binding()
         destination = Path(output_dir).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
         folder = Path(tempfile.mkdtemp(prefix=time.strftime("batch-%Y%m%d-%H%M%S-"), dir=destination))
         rows = [{"index": index, "source": str(path), "status": "not_processed", "output": None,
                  "work_dir": str(folder / "videos" / f"{index:03d}"), "issues": [],
                  "human_approved": False, "model_reviewed": False} for index, path in enumerate(files, 1)]
-        report = {"schema": 2, "directory": str(folder), "total": len(files), "model": connection[0]["model"],
-                  "endpoint": connection[0]["base_url"], "params": params, "status": "ready", "videos": rows,
+        report = {"schema": 3, "provider": "seedance", "directory": str(folder), "total": len(files),
+                  "model": connection[0]["model"], "endpoint": connection[0]["base_url"],
+                  "model_family": seedance_family(connection[0]["model"], connection[0].get("model_family")),
+                  "media_backend": media_backend, "params": params, "status": "ready", "videos": rows,
                   "target_language": target, "profile": profile, "created_at": time.time(), "elapsed_seconds": 0}
-        if provider == "seedance":
-            report.update(schema=3, provider="seedance",
-                          model_family=seedance_family(connection[0]["model"], connection[0].get("model_family")))
+        if report["model_family"] == "seedance-2.0" and media_backend.get("provider") == "self_hosted":
+            report["processing_backend"] = "server-v1"
         _persist(folder, report)
         return _run(folder, report, connection, progress, cancelled)
 
@@ -358,27 +292,11 @@ def resume(batch_dir, *, max_turns=None, progress=None, cancelled=None):
 
 
 def submit_review(batch_dir, video_index, issue_id, decision):
-    from .controller import record_review
     if type(video_index) is not int or not isinstance(issue_id, str) or not issue_id:
         raise ValueError("请提供视频序号和审核问题 ID。")
-    if not isinstance(decision, dict) or set(decision) - {"action", "note", "source_text", "target_text", "start_frame", "end_frame"}:
-        raise ValueError("审核决定包含不支持的字段。")
-    if (type(decision.get("start_frame")) is int and type(decision.get("end_frame")) is int
-            and decision["end_frame"] <= decision["start_frame"]):
-        raise ValueError("审核决定的结束帧必须晚于开始帧。")
+    if not isinstance(decision, dict) or set(decision) - {"action", "note"}:
+        raise ValueError("Seedance 成片审核只接受 keep/reject 及备注。")
     with batch_lock():
         folder, report = _load_batch(batch_dir)
-        if report.get("provider") == "seedance":
-            from .seedance_batch import record_review as record_seedance_review
-            return record_seedance_review(folder, report, video_index, issue_id, decision)
-        if not 1 <= video_index <= len(report["videos"]):
-            raise ValueError("视频序号不在当前批次中。")
-        row = report["videos"][video_index - 1]
-        result = record_review(row["work_dir"], issue_id, decision)
-        state = json.loads((Path(row["work_dir"]) / "controller-state.json").read_text(encoding="utf-8"))
-        row.update(status="ready", issues=state["reviews"], human_approved=False, model_reviewed=False, output=None)
-        report["status"] = "ready"
-        write_json(Path(row["work_dir"]) / "review.json", row)
-        _persist(folder, report)
-        return {**result, "batch_dir": str(folder), "video_index": video_index, "batch_status": "ready",
-                "message": "审核意见已保存；调用 resume_batch 或 resume 让混元继续。", "review": report["review"]}
+        from .seedance_batch import record_review
+        return record_review(folder, report, video_index, issue_id, decision)

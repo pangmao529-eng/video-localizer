@@ -1,0 +1,96 @@
+{
+  "version": "0.2.0rc18",
+  "revision": "503fade0d5d6b4dffbd35c2d5a0a3429",
+  "distribution": "seedance-only",
+  "installer_sha256": "69ddd62437344e373947761388c54dda26396611936d108c5030c8ac4c979b97",
+  "installer_bytes": 161070530,
+  "packaged_source_files": 18,
+  "legacy_runtime_modules_packaged": false,
+  "configuration": {
+    "active_providers": [
+      "seedance"
+    ],
+    "legacy_profiles_archived": 1,
+    "ark_credential_preserved": true,
+    "upload_credential_preserved": true,
+    "distinct_credentials": true,
+    "prior_version_retained": true
+  },
+  "regression": {
+    "tests_run": 181,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "successful": true,
+    "elapsed_seconds": 30.398,
+    "real_api_calls": 0,
+    "synthetic_video_only": true
+  },
+  "server": {
+    "version": "1.1.3",
+    "checks": {
+      "https_media_health": true,
+      "website_health": true,
+      "website_private_api_still_protected": true,
+      "unauthenticated_media_control_denied": true
+    },
+    "all_passed": true,
+    "credentials_used": false,
+    "media_uploaded": false
+  },
+  "new_native_connection": {
+    "version": "0.2.0rc18",
+    "revision": "503fade0d5d6b4dffbd35c2d5a0a3429",
+    "workflow_ready": true
+  },
+  "root_existing_connection_hot_reloaded": false,
+  "fresh_stdio_schema_verified": true,
+  "existing_chat_tool_descriptions_refreshed": false,
+  "api_authentication": {
+    "status": "passed",
+    "http_status": 200,
+    "authentication_verified": true
+  },
+  "synthetic_cloud_test": {
+    "source_duration_seconds": 16,
+    "source_fps": 24,
+    "source_dimensions": [
+      720,
+      1280
+    ],
+    "source_unchanged": true,
+    "status": "needs_review",
+    "segments": 2,
+    "cloud_generation_all_succeeded": true,
+    "candidate_created": true,
+    "technical_status": "failed",
+    "output_duration_delta_ms": 83.333,
+    "source_frame_count": 384,
+    "candidate_frame_count": 386,
+    "frame_count_difference": 2,
+    "technical_checks": {
+      "full_decode": true,
+      "source_unchanged": true,
+      "dimensions_preserved": true,
+      "duration_preserved": false,
+      "frame_rate_preserved": true,
+      "audio_presence_preserved": true,
+      "original_audio_preserved": true
+    },
+    "error_code": null,
+    "remote_error_code": null,
+    "visual_acceptance": "not_performed",
+    "human_approved": false
+  },
+  "original_video": {
+    "unchanged": true,
+    "resubmitted": false,
+    "previous_result": "OutputVideoSensitiveContentDetected.PolicyViolation",
+    "previous_tasks_retained": true
+  },
+  "limitations": [
+    "Technical success is not visual acceptance; review translations, residual text, movement, occlusion and cuts.",
+    "Seedance 2.0 duration=-1 may differ from input timing; exact source attributes are checked, not silently corrected.",
+    "Prior original-video tasks were rejected by provider copyright policy and were not resubmitted."
+  ]
+}

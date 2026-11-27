@@ -18,6 +18,8 @@ def run(folder, report, connection, progress=None, cancelled=None):
             or seedance_family(report["model"], report.get("model_family")) != SEEDANCE_20_FAMILY):
         raise SettingsError("Seedance 2.0 分段批次与当前模型/端点不匹配。")
     prepared = single.prepare(report["params"], data["model"], SEEDANCE_20_FAMILY)
+    from .selfhost_media import bind_report
+    media_backend = bind_report(report)
     if report.get("materials_fingerprint") not in {None, prepared["fingerprint"]}:
         raise ValueError("原要求或资料已变化，拒绝混用分段生成结果。")
     report.update(materials_fingerprint=prepared["fingerprint"], prompt_revision=single.PROMPT_REVISION,
@@ -69,6 +71,7 @@ def run(folder, report, connection, progress=None, cancelled=None):
                 params["request"] += "\n本次输入是整条原片按帧边界机械分段后的一个连续片段，请保留此片段的完整首尾、原始镜头边界与文字动画。只编辑文字，不增加片头片尾或延长剧情。各段使用一致的译名和字体风格；输出不生成音频，插件会按用户要求复用原片音轨。"
                 child = {"schema": 3, "provider": "seedance", "model": data["model"], "endpoint": data["base_url"],
                          "model_family": SEEDANCE_20_FAMILY,
+                         "media_backend": media_backend,
                          "directory": str(child_folder), "status": "ready", "total": len(segments["parts"]),
                          "segment_worker": True, "parent_source_sha256": info["sha256"], "params": params,
                          "target_language": params["target"], "profile": params["profile"],
@@ -85,6 +88,7 @@ def run(folder, report, connection, progress=None, cancelled=None):
                 row["segment_tasks"] = [{"index": r["index"], "task_id": r.get("task_id"), "file_id": r.get("file_id"),
                                          "status": r["status"], "remote_status": r.get("remote_status"),
                                          "error_code": r.get("error_code"),
+                                         "remote_error_code": r.get("remote_error_code"),
                                          "last_transport_error": r.get("last_transport_error")} for r in child["videos"]]
                 _persist(folder, report)
                 emit({**event, **base, "segment_index": event.get("index"), "segment_total": len(child["videos"]),
@@ -94,11 +98,13 @@ def run(folder, report, connection, progress=None, cancelled=None):
             row["segment_tasks"] = [{"index": r["index"], "task_id": r.get("task_id"), "file_id": r.get("file_id"),
                                      "status": r["status"], "remote_status": r.get("remote_status"),
                                      "error_code": r.get("error_code"), "message": r.get("message"),
+                                     "remote_error_code": r.get("remote_error_code"),
                                      "last_transport_error": r.get("last_transport_error")} for r in child["videos"]]
             if child_result["status"] in STOP_STATES or any(r["status"] not in {"completed", "needs_review"} for r in child["videos"]):
                 status = child_result["status"] if child_result["status"] in STOP_STATES else "failed"
                 failing = next((r for r in child["videos"] if r["status"] not in {"completed", "needs_review"}), {})
                 row.update(status=status, error_code=failing.get("error_code"), message=failing.get("message") or "分段任务尚未完成。")
+                row["remote_error_code"] = failing.get("remote_error_code")
                 if failing.get("last_transport_error"):
                     row["last_transport_error"] = dict(failing["last_transport_error"], segment_index=failing["index"])
                 if status in STOP_STATES:

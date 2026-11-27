@@ -43,12 +43,15 @@ MAX_REQUEST_BYTES = 48 * 1024**2
 MAX_DOWNLOAD_BYTES = 1024**3
 CHUNK_BYTES = 256 * 1024
 DEFAULT_UPLOAD_TIMEOUT = 600
+DEFAULT_CREATE_TIMEOUT = 180
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
 _STATES = {"queued", "running", "cancelled", "succeeded", "failed", "expired"}
 _FAILURE_STAGES = {"connect", "send", "body_read", "response_headers", "response_body",
                    "response_decode", "response_validation"}
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_CLIENT_REQUEST_ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _EARLY_RESPONSE_TIMEOUT = 5
+_CONNECT_TIMEOUT = 30
 _DEFINITE_EARLY_REJECTIONS = {400, 401, 403, 404, 405, 411, 413, 415, 422, 429}
 _EXCEPTION_CLASSES = (
     (ssl.SSLCertVerificationError, "SSLCertVerificationError"), (ssl.SSLError, "SSLError"),
@@ -146,7 +149,8 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 class SeedanceClient:
     def __init__(self, base_url, api_key, model=DEFAULT_MODEL, *, timeout=60,
-                 upload_timeout=DEFAULT_UPLOAD_TIMEOUT, cancelled=None, model_family=None):
+                 create_timeout=DEFAULT_CREATE_TIMEOUT, upload_timeout=DEFAULT_UPLOAD_TIMEOUT,
+                 cancelled=None, model_family=None):
         try:
             parsed = urlsplit(base_url)
             if (not isinstance(base_url, str) or parsed.scheme != "https" or not parsed.hostname
@@ -168,6 +172,9 @@ class SeedanceClient:
             raise SeedanceError("configuration", "Seedance 模型或接入点须指定匹配的受支持模型系列。") from None
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 1 <= timeout <= 1200:
             raise SeedanceError("invalid_input", "Seedance 单次请求超时须为 1–1200 秒。")
+        if (type(create_timeout) not in (int, float) or not math.isfinite(create_timeout)
+                or not 1 <= create_timeout <= 1200):
+            raise SeedanceError("invalid_input", "Seedance 创建任务超时须为 1–1200 秒。")
         if (type(upload_timeout) not in (int, float) or not math.isfinite(upload_timeout)
                 or not 1 <= upload_timeout <= 1200):
             raise SeedanceError("invalid_input", "Seedance 上传超时须为 1–1200 秒。")
@@ -177,6 +184,7 @@ class SeedanceClient:
         self.model = model
         self.model_family = family
         self.timeout = timeout
+        self.create_timeout = create_timeout
         self.upload_timeout = upload_timeout
         self.cancelled = cancelled
         self._endpoint = parsed
@@ -188,7 +196,11 @@ class SeedanceClient:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise SeedanceError("timeout", "Seedance 请求已超时。")
-        return min(remaining, 30)
+        # This is the remaining total request budget, not a polling interval.
+        # A socket timeout aborts http.client's response reader; a 30-second cap
+        # here silently truncated longer configured waits without a safe way to
+        # continue the same POST. Only establishing a connection has its own cap.
+        return remaining
 
     def _tick(self, connection, deadline):
         remaining = self._check(deadline)
@@ -222,6 +234,12 @@ class SeedanceClient:
                 return value
         return None
 
+    def _client_request_id(self, value):
+        if value is not None and (not isinstance(value, str) or not _CLIENT_REQUEST_ID.fullmatch(value)
+                                  or self._key in value):
+            raise SeedanceError("invalid_input", "客户端请求标识须为不含凭据的 1–128 位 ASCII 字母、数字、点、横线或下划线。")
+        return value
+
     def _annotate(self, error, diagnostics):
         error.failure_stage = diagnostics["failure_stage"]
         error.completed_body_bytes = diagnostics["completed_body_bytes"]
@@ -249,7 +267,8 @@ class SeedanceClient:
             return None
 
     def _request(self, method, suffix, *, body=None, content_type=None, content_length=None,
-                 deadline=None, diagnostics=None):
+                 deadline=None, diagnostics=None, client_request_id=None):
+        client_request_id = self._client_request_id(client_request_id)
         if deadline is None:
             deadline = time.monotonic() + self.timeout
         if diagnostics is None:
@@ -261,13 +280,16 @@ class SeedanceClient:
         modifying = method == "POST"
         try:
             connection = http.client.HTTPSConnection(self._endpoint.hostname, self._endpoint.port,
-                                                     timeout=self._check(deadline))
+                                                     timeout=min(self._check(deadline), _CONNECT_TIMEOUT))
             # Connect before marking the POST uncertain: DNS/TLS failures cannot
             # have created a task. No redirects, authentication handlers or retries.
             connection.connect()
             self._tick(connection, deadline)
             headers = {"Authorization": "Bearer " + self._key, "Accept": "application/json",
                        "Accept-Encoding": "identity"}
+            if client_request_id is not None:
+                # A log correlation identifier, not an idempotency guarantee.
+                headers["X-Client-Request-Id"] = client_request_id
             if content_type:
                 headers["Content-Type"] = content_type
                 headers["Content-Length"] = str(content_length)
@@ -288,7 +310,7 @@ class SeedanceClient:
                         diagnostics["failure_stage"] = "send"
                         # http.client streams each yielded block with sendall.
                         # Refresh its timeout before every block, so a long
-                        # upload has a bounded inactivity and total deadline.
+                        # upload remains within its original total deadline.
                         self._tick(connection, deadline)
                         yield chunk
                         # http.client asks for the next block only after the
@@ -480,13 +502,16 @@ class SeedanceClient:
         return value
 
     def create_edit(self, video_reference, prompt, *, resolution="720p", reference_images=None,
-                    generate_audio=True):
+                    generate_audio=True, client_request_id=None):
         """Submit exactly one task; caller must durably save the returned task ID.
 
         Seedance 2.0 infers editing from the prompt and reference video; its
         duration=-1 chooses a 4–15 second duration rather than guaranteeing exact
         input timing. Only 2.5 supports the explicit edit task-type parameter.
+        The creation request has a separate bounded budget (180 seconds by
+        default); task queries retain the regular API budget (60 seconds).
         """
+        deadline = time.monotonic() + self.create_timeout
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000 or self._key in prompt:
             raise SeedanceError("invalid_input", "请提供有效且不含凭据的视频编辑提示词。")
         if resolution not in {"480p", "720p", "1080p"}:
@@ -512,7 +537,8 @@ class SeedanceClient:
             raise SeedanceError("invalid_input", "视频编辑请求过大。")
         diagnostics = {}
         value = self._request("POST", "/contents/generations/tasks", body=body,
-                              content_type="application/json", content_length=len(body), diagnostics=diagnostics)
+                              content_type="application/json", content_length=len(body), diagnostics=diagnostics,
+                              client_request_id=self._client_request_id(client_request_id), deadline=deadline)
         try:
             return self._identifier(value.get("id"), "cgt-", code="invalid_response")
         except SeedanceError as error:
@@ -536,6 +562,8 @@ class SeedanceClient:
         if value["status"] == "failed":
             err = value.get("error")
             result["error_code"] = self._provider_code(err.get("code")) if isinstance(err, dict) else None
+            if result["error_code"] == "OutputVideoSensitiveContentDetected.PolicyViolation":
+                result["message"] = "Seedance 平台以生成视频可能涉及版权限制为由拒绝本次任务；上传和任务提交已完成，未产生可交付成片。原任务已保留，不会自动重新生成。"
         for name in ("created_at", "updated_at", "duration", "framespersecond"):
             if type(value.get(name)) in (int, float) and 0 <= value[name] <= 10**12 and math.isfinite(value[name]):
                 result[name] = value[name]
@@ -562,7 +590,8 @@ class SeedanceClient:
         target = Path(output_path)
         if target.exists():
             raise SeedanceError("file_exists", "下载目标已存在，请选择新文件。")
-        connection = _PinnedHTTPSConnection(parsed.hostname, addresses[0], timeout=self._check(deadline))
+        connection = _PinnedHTTPSConnection(parsed.hostname, addresses[0],
+                                            timeout=min(self._check(deadline), _CONNECT_TIMEOUT))
         temporary = None
         try:
             connection.connect()

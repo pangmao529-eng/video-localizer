@@ -101,6 +101,33 @@ class SeedanceClientTests(unittest.TestCase):
         self.assertEqual(int(kwargs["headers"]["Content-Length"]), len(kwargs["body"]))
         self.conn.close.assert_called_once()
 
+    def test_creation_correlation_id_is_sent_without_claiming_idempotency(self):
+        self.response({"id": "cgt-traced-creation"})
+        trace = "vl-0123456789abcdef0123456789abcdef"
+        self.assertEqual(self.client.create_edit("asset://asset-video", "edit", client_request_id=trace),
+                         "cgt-traced-creation")
+        headers = self.conn.request.call_args.kwargs["headers"]
+        self.assertEqual(headers["X-Client-Request-Id"], trace)
+        self.assertNotIn("Idempotency-Key", headers)
+        self.conn.request.assert_called_once()
+
+    def test_creation_correlation_id_is_optional_and_validated_before_connecting(self):
+        for trace in ("", "x" * 129, "contains spaces", "注入", "header\r\nvalue", 1, {},
+                      self.secret, "prefix-" + self.secret):
+            with self.subTest(trace_type=type(trace).__name__):
+                self.assert_error(lambda: self.client.create_edit("asset://asset-video", "edit", client_request_id=trace),
+                                  "invalid_input")
+        self.factory.assert_not_called()
+        for trace in (None, "_" + "x" * 127):
+            with self.subTest(optional=trace is None):
+                self.response({"id": "cgt-optional-trace"})
+                self.client.create_edit("asset://asset-video", "edit", client_request_id=trace)
+                headers = self.conn.request.call_args.kwargs["headers"]
+                if trace is None:
+                    self.assertNotIn("X-Client-Request-Id", headers)
+                else:
+                    self.assertEqual(headers["X-Client-Request-Id"], trace)
+
     def test_seedance_25_retains_explicit_edit_request_and_thirty_images(self):
         self.response({"id": "cgt-test-25"})
         client = sc.SeedanceClient(self.base, self.secret, sc.SEEDANCE_25_MODEL)
@@ -230,8 +257,77 @@ class SeedanceClientTests(unittest.TestCase):
         self.assertEqual(result["file_id"], "file-slow")
         self.assertIn(original, b"".join(sent))
         self.assertGreaterEqual(self.conn.sock.settimeout.call_count, len(sent))
-        self.assertTrue(all(0 < call.args[0] <= 30 for call in self.conn.sock.settimeout.call_args_list))
+        timeouts = [call.args[0] for call in self.conn.sock.settimeout.call_args_list]
+        self.assertTrue(all(0 < value <= sc.DEFAULT_UPLOAD_TIMEOUT for value in timeouts))
+        self.assertEqual(timeouts, sorted(timeouts, reverse=True))
         self.conn.request.assert_called_once()
+
+    def test_slow_creation_response_uses_remaining_budget_without_resending(self):
+        # Model a real socket's timeout enforcement without a 45-second sleep.
+        # The former global 30-second cap fails this POST after its body is sent.
+        clock, socket_state = {"now": 0}, {"timeout": None}
+        client = sc.SeedanceClient(self.base, self.secret, timeout=10, create_timeout=60)
+        self.conn.sock = Mock()
+        self.conn.sock.settimeout.side_effect = lambda value: socket_state.update(timeout=value)
+        self.conn.connect.side_effect = lambda: clock.update(now=clock["now"] + 2)
+        self.conn.request.side_effect = lambda *args, **kwargs: clock.update(now=clock["now"] + 3)
+        def reply():
+            waiting = 45
+            available = socket_state["timeout"]
+            clock["now"] += min(waiting, available)
+            if available < waiting:
+                raise TimeoutError("synthetic response delay")
+            return Response({"id": "cgt-delayed-creation"})
+        self.conn.getresponse.side_effect = reply
+        with patch.object(sc.time, "monotonic", side_effect=lambda: clock["now"]):
+            result = client.create_edit("asset://asset-video", "字幕参考译文 번역 참고 " * 500)
+        self.assertEqual(result, "cgt-delayed-creation")
+        self.assertEqual(clock["now"], 50)
+        self.factory.assert_called_once_with("ark.cn-beijing.volces.com", None, timeout=30)
+        self.assertIn(55, [call.args[0] for call in self.conn.sock.settimeout.call_args_list])
+        self.assertEqual(socket_state["timeout"], 10)
+        self.conn.request.assert_called_once()
+        self.conn.getresponse.assert_called_once()
+        self.conn.close.assert_called_once()
+
+    def test_response_wait_exhausts_original_budget_and_stays_uncertain(self):
+        clock, socket_state = {"now": 0}, {"timeout": None}
+        client = sc.SeedanceClient(self.base, self.secret, timeout=120, create_timeout=40)
+        self.conn.sock = Mock()
+        self.conn.sock.settimeout.side_effect = lambda value: socket_state.update(timeout=value)
+        self.conn.connect.side_effect = lambda: clock.update(now=clock["now"] + 2)
+        self.conn.request.side_effect = lambda *args, **kwargs: clock.update(now=clock["now"] + 3)
+        def reply():
+            self.assertEqual(socket_state["timeout"], 35)
+            clock["now"] += socket_state["timeout"]
+            raise TimeoutError("synthetic response deadline")
+        self.conn.getresponse.side_effect = reply
+        with patch.object(sc.time, "monotonic", side_effect=lambda: clock["now"]):
+            error = self.assert_error(lambda: client.create_edit("asset://asset-video", "edit"), "network", True)
+        self.assertEqual(clock["now"], 40)
+        self.assertEqual((error.failure_stage, error.exception_type), ("response_headers", "TimeoutError"))
+        self.assertEqual(error.completed_body_bytes, len(self.conn.request.call_args.kwargs["body"]))
+        self.conn.request.assert_called_once()
+        self.conn.getresponse.assert_called_once()
+        self.conn.close.assert_called_once()
+
+    def test_creation_default_budget_and_validation_do_not_change_queries(self):
+        self.assertEqual(self.client.create_timeout, 180)
+        self.assertEqual(self.client.timeout, 60)
+        for value in (True, None, "180", float("nan"), float("inf"), 0, 1201):
+            with self.subTest(value=value):
+                self.assert_error(lambda: sc.SeedanceClient(self.base, self.secret, create_timeout=value),
+                                  "invalid_input")
+        self.factory.assert_not_called()
+        for value in (1, 180, 1200):
+            self.assertEqual(sc.SeedanceClient(self.base, self.secret, create_timeout=value).create_timeout, value)
+        clock = {"now": 0}
+        client = sc.SeedanceClient(self.base, self.secret, timeout=12, create_timeout=180)
+        self.conn.request.side_effect = lambda *args, **kwargs: clock.update(now=13)
+        with patch.object(sc.time, "monotonic", side_effect=lambda: clock["now"]):
+            self.assert_error(lambda: client.get_task("cgt-query-budget"), "timeout")
+        self.conn.request.assert_called_once()
+        self.conn.getresponse.assert_not_called()
 
     def test_upload_deadline_exhaustion_is_uncertain_without_retry(self):
         source = self.root / "slow.mp4"
@@ -489,7 +585,7 @@ class SeedanceClientTests(unittest.TestCase):
                 client = sc.SeedanceClient(self.base, self.secret, cancelled=lambda: clock["cancelled"])
                 def fail(*args, **kwargs):
                     clock["cancelled"] = cancelled
-                    clock["now"] = 60
+                    clock["now"] = client.create_timeout
                     raise BrokenPipeError(self.secret)
                 self.conn.reset_mock()
                 self.conn.request.side_effect = fail

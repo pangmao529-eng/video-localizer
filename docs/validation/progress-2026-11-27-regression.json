@@ -1,0 +1,14 @@
+{
+  "unique_tests": 320,
+  "passed_after_environment_retry": true,
+  "initial_assertion_failures": 0,
+  "initial_sandbox_error_records": 24,
+  "retried_test_methods": 16,
+  "final_errors": 0,
+  "final_failures": 0,
+  "skipped": 0,
+  "syntax_files": 53,
+  "syntax_passed": true,
+  "synthetic_media_only": true,
+  "cloud_api_calls": false
+}

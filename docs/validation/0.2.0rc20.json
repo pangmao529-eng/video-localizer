@@ -1,0 +1,309 @@
+{
+  "version": "0.2.0rc20",
+  "revision": "e8c8799bbd1e0d82518b781c41116b1a",
+  "generated_at": "2026-11-27T01:01:46+09:00",
+  "timezone": "Asia/Seoul",
+  "installer_sha256": "9d33d43466ef3fef7cf380f3d51127d13b08e0d34dce114e748813f157707cfa",
+  "installer_bytes": 161081200,
+  "distribution": "seedance-only",
+  "processing_backend": "server-v1",
+  "repair": {
+    "confirmed_bug": "global_30_second_socket_cap_truncated_larger_request_budget",
+    "connect_timeout_seconds": 30,
+    "creation_total_budget_seconds": 180,
+    "ordinary_request_total_budget_seconds": 60,
+    "automatic_generation_retries": false,
+    "failure_stage_and_transport_details_persisted": true,
+    "client_request_id_is_idempotency_key": false,
+    "successful_creation_response_exceeded_old_30_second_cap": true,
+    "successful_creation_times_over_old_cap_seconds": [
+      40.874
+    ],
+    "sole_cause_of_historical_failures_proven": false
+  },
+  "network_diagnostics": {
+    "invalid_model_less_requests_only": true,
+    "generation_requests": 0,
+    "observed_new_tasks": 0,
+    "probes": [
+      {
+        "case": "empty_json",
+        "body_bytes": 2,
+        "http_status": 400,
+        "provider_code": "MissingParameter",
+        "elapsed_seconds": 0.36,
+        "failure_stage": "response_headers",
+        "valid_generation_request": false
+      },
+      {
+        "case": "large_utf8_missing_model",
+        "body_bytes": 13543,
+        "http_status": 400,
+        "provider_code": "MissingParameter",
+        "elapsed_seconds": 24.308,
+        "failure_stage": "response_headers",
+        "valid_generation_request": false
+      },
+      {
+        "case": "single_write",
+        "body_bytes": 18043,
+        "http_status": 400,
+        "provider_code": "MissingParameter",
+        "elapsed_seconds": 0.533,
+        "failure_stage": "response_headers",
+        "valid_generation_request": false
+      },
+      {
+        "case": "writes_1024",
+        "body_bytes": 18043,
+        "http_status": 400,
+        "provider_code": "MissingParameter",
+        "elapsed_seconds": 0.389,
+        "failure_stage": "response_headers",
+        "valid_generation_request": false
+      }
+    ],
+    "conclusion": "authenticated_requests_reached_validation_with_variable_response_latency"
+  },
+  "installation": {
+    "installed_source_files": 19,
+    "source_hashes_match": true,
+    "legacy_modules_packaged": false,
+    "previous_installation_retained": true,
+    "settings_unchanged": true,
+    "media_settings_unchanged": true,
+    "ark_credential_preserved": true,
+    "upload_credential_preserved": true,
+    "distinct_credentials": true
+  },
+  "current_packaged_source_matches_build": true,
+  "regression": {
+    "tests_run": 228,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "successful": true,
+    "elapsed_seconds": 60.617,
+    "real_api_calls": 0,
+    "synthetic_video_only": true
+  },
+  "native_connection": {
+    "running_version": "0.2.0rc20",
+    "runtime_revision": "e8c8799bbd1e0d82518b781c41116b1a",
+    "fresh_native_connection_verified": true,
+    "root_preexisting_connection_hot_reloaded": false,
+    "fresh_stdio_schema_verified": true
+  },
+  "server_deployment": {
+    "version": "1.2.0",
+    "revision": "0978211b7000c075f78ae68c764e03c2af5569647d8485178463e8026ce44a19",
+    "source_hashes": {
+      "media_service.py": "aeaf9224b8ab5101e131142146ed52b3bde9891b92c02f607a29106ff8a3e032",
+      "media_processing.py": "50192dc63ed312ca78d50edc4a23c89442955e43a021fd7d2d9b1a03b8ff57ac"
+    },
+    "source_unchanged_since_server_verification": true,
+    "redeployed_for_this_client_fix": false,
+    "previous_https_checks": {
+      "https_media_health": true,
+      "processing_ready": true,
+      "website_health": true,
+      "unauthenticated_job_denied": true,
+      "unauthenticated_object_denied": true
+    }
+  },
+  "historical_synthetic_server_smoke": [
+    {
+      "case": "silent_candidates",
+      "status": "passed",
+      "historical_evidence_reused": true,
+      "real_api_calls": 0,
+      "cloud_generation": false,
+      "user_media_used": false,
+      "source_seconds": 43.5,
+      "part_seconds": [
+        15.0,
+        15.0,
+        13.5
+      ],
+      "server_import_count": 3,
+      "technical_status": "passed",
+      "checks": {
+        "full_decode": true,
+        "source_unchanged": true,
+        "dimensions_preserved": true,
+        "duration_preserved": true,
+        "frame_rate_preserved": true,
+        "audio_presence_preserved": true,
+        "original_audio_preserved": true
+      },
+      "deployment_revision": "0978211b7000c075f78ae68c764e03c2af5569647d8485178463e8026ce44a19",
+      "visual_acceptance": "not_performed"
+    },
+    {
+      "case": "aac_context_audio",
+      "status": "passed",
+      "historical_evidence_reused": true,
+      "real_api_calls": 0,
+      "cloud_generation": false,
+      "user_media_used": false,
+      "source_seconds": 43.5,
+      "part_seconds": [
+        15.0,
+        15.0,
+        13.5
+      ],
+      "server_import_count": 3,
+      "technical_status": "passed",
+      "checks": {
+        "full_decode": true,
+        "source_unchanged": true,
+        "dimensions_preserved": true,
+        "duration_preserved": true,
+        "frame_rate_preserved": true,
+        "audio_presence_preserved": true,
+        "original_audio_preserved": true
+      },
+      "deployment_revision": "0978211b7000c075f78ae68c764e03c2af5569647d8485178463e8026ce44a19",
+      "visual_acceptance": "not_performed"
+    }
+  ],
+  "reference_translations": {
+    "rows": 75,
+    "file_unchanged": true,
+    "attached_to_batch": true,
+    "plaintext_published": false,
+    "translations_rewritten_by_host": false,
+    "pairs_in_prompt_unchanged": true
+  },
+  "real_user_video_test": {
+    "status": "failed",
+    "same_original_batch_resumed": true,
+    "source_unchanged": true,
+    "source_media": {
+      "durationMs": 43400.0,
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0,
+      "bytes": 21248707
+    },
+    "planned_segments": 3,
+    "prior_generation_post_attempts": 2,
+    "prior_unresolved_submissions": 2,
+    "new_generation_post_attempts": 1,
+    "generation_post_attempt_count": 3,
+    "confirmed_generation_tasks": 1,
+    "new_unresolved_submissions": 0,
+    "uncertain_generation_submissions": 2,
+    "historical_acceptance_or_billing_resolved": false,
+    "last_available_read_only_audit": {
+      "performed": true,
+      "read_only": true,
+      "visible_task_count": 4,
+      "time_window_candidate_count": 0,
+      "unambiguous_binding_found": false,
+      "task_identifiers_published": false,
+      "absence_is_not_proof_of_no_acceptance_or_charge": true
+    },
+    "bound_task_metadata": {
+      "status": "failed",
+      "error_code": "OutputVideoSensitiveContentDetected.PolicyViolation",
+      "execution_expires_after_seconds": 172800,
+      "seconds_from_creation_to_terminal_update": 1064,
+      "task_expired": false,
+      "same_task_id_verified": true
+    },
+    "platform_policy_rejection": true,
+    "attempts_after_fix": [
+      {
+        "segment_index": 1,
+        "status": "submitted",
+        "elapsed_seconds": 40.874,
+        "task_id_received": true,
+        "client_trace_persisted_before_submission": true,
+        "submission_uncertain": false,
+        "transport_error": {
+          "submission_uncertain": false,
+          "provider_request_id_available": false
+        }
+      }
+    ],
+    "parts": [
+      {
+        "index": 1,
+        "duration_seconds": 15.0,
+        "start_frame": 0,
+        "end_frame": 900,
+        "status": "failed",
+        "generation_status": "failed",
+        "task_id_received": true,
+        "server_import_status": null,
+        "remote_error_code": "OutputVideoSensitiveContentDetected.PolicyViolation",
+        "transport_error": {
+          "submission_uncertain": false,
+          "provider_request_id_available": false
+        }
+      },
+      {
+        "index": 2,
+        "duration_seconds": 15.0,
+        "start_frame": 900,
+        "end_frame": 1800,
+        "status": "not_processed",
+        "generation_status": null,
+        "task_id_received": false,
+        "server_import_status": null,
+        "remote_error_code": null,
+        "transport_error": {
+          "submission_uncertain": false,
+          "provider_request_id_available": false
+        }
+      },
+      {
+        "index": 3,
+        "duration_seconds": 13.4,
+        "start_frame": 1800,
+        "end_frame": 2604,
+        "status": "not_processed",
+        "generation_status": null,
+        "task_id_received": false,
+        "server_import_status": null,
+        "remote_error_code": null,
+        "transport_error": {
+          "submission_uncertain": false,
+          "provider_request_id_available": false
+        }
+      }
+    ],
+    "server_split_status": "succeeded",
+    "successful_generated_segments": 0,
+    "server_import_count": 0,
+    "server_join_status": null,
+    "candidate_downloaded": false,
+    "candidate_hash_verified": false,
+    "only_final_video_downloaded": false,
+    "no_local_segment_files": true,
+    "pipeline_completed_to_final_download": false,
+    "technical_status": "not_performed",
+    "technical_checks": {},
+    "server_technical_status": "not_performed",
+    "server_technical_checks": {},
+    "output_media": {},
+    "error_code": "remote_task_failed",
+    "remote_error_code": "OutputVideoSensitiveContentDetected.PolicyViolation",
+    "server_error_code": null,
+    "last_transport_error": {
+      "submission_uncertain": false,
+      "provider_request_id_available": false
+    },
+    "visual_acceptance": "not_performed",
+    "model_reviewed": false,
+    "human_approved": false
+  },
+  "limitations": [
+    "The confirmed timeout bug is not proof of the sole cause of the historical failures.",
+    "Two prior submissions remain unresolved even if later attempts obtain task IDs.",
+    "Invalid model-less diagnostic requests are not successful generation tests.",
+    "Historical mechanical smoke passes do not prove the resumed user video completed.",
+    "No visual approval is inferred from successful generation or technical checks."
+  ]
+}

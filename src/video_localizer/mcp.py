@@ -1,4 +1,4 @@
-"""Async stdio MCP entry points for the persistent Hunyuan controller."""
+"""Async stdio MCP entry points for independent Seedance and MediaKit batches."""
 
 import json
 import os
@@ -20,20 +20,26 @@ PARAMS = {
                "description": "Absolute paths of local MP4 files or immediate input folders."},
     "output_dir": {"type": "string", "description": "Absolute output folder chosen by the user."},
     "target": {"type": "string"}, "source_language": {"type": "string"},
-    "profile": {"type": "string", "enum": ["source", "2k120"]},
+    "profile": {"type": "string", "enum": ["source"]},
     "translations": {"type": "string", "description": "Optional finalized translation table."},
     "glossary": {"type": "string"}, "references": {"type": "string"},
     "request": {"type": "string", "maxLength": 32000,
                 "description": "Forward the human's original video requirements. The selected cloud model decides translations and edits; the host must not invent them."},
-    "max_turns": {"type": "integer", "minimum": 1, "maximum": 200, "default": 80},
+    "max_turns": {"type": "integer", "minimum": 1, "maximum": 200, "default": 80,
+                  "description": "Maximum task-status polls for each video in this run; resuming reuses saved task IDs."},
 }
 DECISION = {"type": "object", "properties": {
-    "action": {"type": "string", "enum": ["keep", "replace", "adjust_timing", "retry", "reject"]},
-    "note": {"type": "string", "maxLength": 4000},
-    "source_text": {"type": "string", "maxLength": 4000, "description": "Exact original text confirmed by the human; use with target_text and source-frame interval to bind a specific change."},
-    "target_text": {"type": "string", "maxLength": 4000},
-    "start_frame": {"type": "integer", "minimum": 0}, "end_frame": {"type": "integer", "minimum": 0}},
+    "action": {"type": "string", "enum": ["keep", "reject"]},
+    "note": {"type": "string", "maxLength": 4000}},
     "required": ["action"], "additionalProperties": False}
+SUBTITLE_PARAMS = {
+    "input_path": {"type": "string", "minLength": 1, "description": "Absolute path to one local MP4 source."},
+    "translations": {"type": "string", "minLength": 1,
+                     "description": "Absolute path to the human-approved UTF-8 JSON source/target translation array; no host-generated translations."},
+    "output_dir": {"type": "string", "minLength": 1, "description": "Absolute local output directory."},
+    "max_polls": {"type": "integer", "minimum": 1, "maximum": 200, "default": 60},
+    "stop_after": {"type": "string", "enum": ["ocr", "erase"], "description": "Optionally pause after OCR or erasure and preserve the checkpoint."},
+}
 
 
 def _tool(name, description, properties=None, required=(), read_only=False):
@@ -43,20 +49,25 @@ def _tool(name, description, properties=None, required=(), read_only=False):
 
 
 TOOLS = [
-    _tool("check_setup", "Check runtime, selected provider and saved configuration. video_workflow_ready reports whether video production is implemented. Does not contact the model.", read_only=True),
-    _tool("open_model_configuration", "Open the Windows configuration window; the user enters the API key locally. Check setup after saving."),
-    _tool("check_model", "Check the selected provider: Hy4 performs a billable tool-call round trip; Seedance only checks video API authentication without submitting generation, and cannot verify model entitlement. Poll batch_progress.",
-          {"image_path": {"type": "string", "description": "Optional absolute JPEG/PNG/WebP test image."},
-           "timeout": {"type": "number", "minimum": 10, "maximum": 600, "default": 180}}),
-    _tool("convert_videos", "Start a batch with the configured provider. Seedance uses billable remote editing; supports source profile, 4-30 second originals. Seedance 2.0 mechanically splits into up to two <=15 second segments, edits each in cloud, joins unchanged candidate video streams and reuses original audio. 2.5 edits the whole source. Cloud model makes visual decisions; results require review. Poll batch_progress.",
+    _tool("check_setup", "Check the runtime, Seedance configuration and separate private-media upload credential. video_workflow_ready requires all three; this check contacts neither the model nor the media server.", read_only=True),
+    _tool("check_mediakit_setup", "Read the separate MediaKit configuration and credential availability. Contacts neither MediaKit nor the media server; this does not verify entitlement, server rendering capability or visual quality.", read_only=True),
+    _tool("open_model_configuration", "Open local configuration for Seedance and the private-media server. Their separate credentials stay in Windows Credential Manager. Check setup after saving."),
+    _tool("check_model", "Check Seedance video API authentication with a read-only task-list request. Does not submit generation or verify model entitlement, media upload or output quality. Poll batch_progress.",
+          {"timeout": {"type": "number", "minimum": 10, "maximum": 600, "default": 180}}),
+    _tool("convert_videos", "Start billable Seedance cloud editing. New Seedance 2.0 batches upload the complete 4-300 second original once; the private-media server cuts frame-aligned segments at 15 seconds (short tails borrow frames to stay >=4 seconds), receives cloud candidates and joins them with the original audio. The desktop downloads only the joined video and performs technical checks. Supports up to 20 segments, source profile, no local split or join fallback. Seedance decides translations and visual edits; results require explicit human review. Seedance 2.5 and old batches retain their previous workflow. Poll batch_progress.",
           PARAMS, ("inputs", "output_dir")),
-    _tool("resume_batch", "Resume an existing persistent batch after fixing an error, increasing the turn allowance, or recording human decisions. Completed videos are skipped.",
+    _tool("resume_batch", "Resume a Seedance batch after fixing an error or increasing the polling allowance. Existing task IDs are queried without resubmitting; failed policy checks are preserved. Completed videos are skipped.",
           {"batch_dir": {"type": "string"}, "max_turns": {"type": "integer", "minimum": 1, "maximum": 200}}, ("batch_dir",)),
-    _tool("cancel_batch", "Stop local work and preserve checkpoints. An in-flight request may finish. Submitted Seedance cloud tasks may continue and incur charges; resume queries the existing task rather than submitting again."),
+    _tool("convert_subtitles", "Start billable MediaKit OCR and fine subtitle erasure for one MP4, then render the human-approved Korean translations on the media server. Cloud OCR determines text/timing; exact reference matching prevents inventing or inserting absent translations. Preserve original audio and save an independent resumable checkpoint. Visual and human acceptance remain separate. Poll batch_progress.",
+          SUBTITLE_PARAMS, ("input_path", "translations", "output_dir")),
+    _tool("resume_subtitles", "Resume an independent MediaKit checkpoint using saved task IDs and idempotency tokens. Source, translation and configuration bindings must match. Does not route to Seedance or create human approval. Poll batch_progress.",
+          {"batch_dir": {"type": "string"}, "max_polls": SUBTITLE_PARAMS["max_polls"],
+           "stop_after": SUBTITLE_PARAMS["stop_after"]}, ("batch_dir",)),
+    _tool("cancel_batch", "Stop local work and preserve checkpoints. An in-flight request may finish. Submitted Seedance or MediaKit cloud tasks may continue and incur charges; use the matching resume tool to query existing tasks."),
     _tool("submit_review", "Record an explicit human decision only. Never manufacture approval or choose for the human. Then call resume_batch when authorized to continue.",
           {"batch_dir": {"type": "string"}, "video_index": {"type": "integer", "minimum": 1, "maximum": 20},
            "issue_id": {"type": "string"}, "decision": DECISION}, ("batch_dir", "video_index", "issue_id", "decision")),
-    _tool("batch_progress", "Wait briefly and return phase, read_only_turns, compactions, output_recoveries and precise final/paused/review status. paused_budget means the turn allowance was exhausted; error_code output_limit or stalled means generation or analysis could not progress. None of these is completion or full-video quality approval.",
+    _tool("batch_progress", "Wait briefly and return the active Seedance or MediaKit phase and final, paused or review status. paused_budget exhausts local status polling; paused_checkpoint is a saved intermediate stop. Neither is completion. Technical checks do not imply visual approval; needs_review awaits human inspection.",
           {"wait_seconds": {"type": "integer", "minimum": 0, "maximum": 20}}, read_only=True),
 ]
 
@@ -64,6 +75,14 @@ TOOLS = [
 def _absolute(value):
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError("MCP 文件、批次和输出目录请使用本机绝对路径。")
+
+
+def _subtitle_options(args):
+    polls = args.get("max_polls", 60)
+    if type(polls) is not int or not 1 <= polls <= 200:
+        raise ValueError("max_polls 取值为 1–200。")
+    if "stop_after" in args and args["stop_after"] not in ("ocr", "erase"):
+        raise ValueError("stop_after 仅支持 ocr 或 erase。")
 
 
 class Session:
@@ -78,8 +97,7 @@ class Session:
         def update(event):
             with self.lock:
                 previous = self.state.get("progress", {})
-                # Some tool events do not repeat controller analysis counters.
-                # Retain them only for this video, never across a new video.
+                # Retain the current phase only for this video.
                 retained = {key: previous[key] for key in ANALYSIS_FIELDS if key in previous}
                 if event.get("stage") in {"batch_started", "start"} or previous.get("index") != event.get("index"):
                     retained = {}
@@ -88,9 +106,18 @@ class Session:
         try:
             if operation == "check_model":
                 result = check_model(**args, cancelled=self.cancel.is_set)
+            elif operation == "convert_videos":
+                result = convert(**args, progress=update, cancelled=self.cancel.is_set)
+            elif operation == "resume_batch":
+                result = resume(**args, progress=update, cancelled=self.cancel.is_set)
+            elif operation == "convert_subtitles":
+                from .mediakit_batch import convert as convert_subtitles
+                result = convert_subtitles(**args, progress=update, cancelled=self.cancel.is_set)
+            elif operation == "resume_subtitles":
+                from .mediakit_batch import resume as resume_subtitles
+                result = resume_subtitles(**args, progress=update, cancelled=self.cancel.is_set)
             else:
-                function = convert if operation == "convert_videos" else resume
-                result = function(**args, progress=update, cancelled=self.cancel.is_set)
+                raise ValueError("不支持的后台任务类型。")
             result = {**result, "operation": operation}
         except Exception as exc:
             result = {"status": "failed", "operation": operation, "message": str(exc)}
@@ -108,7 +135,7 @@ class Session:
             self.done.clear()
             self.cancel.clear()
             # On ordinary stdio EOF, allow the cancellation callback to stop an
-            # active executor and persist its checkpoint before Python exits.
+            # active transfer and persist its checkpoint before Python exits.
             threading.Thread(target=self._run, args=(operation, args), daemon=False).start()
             return self.state.copy()
 
@@ -117,6 +144,9 @@ class Session:
             raise ValueError("工具参数需要 JSON 对象。")
         if name == "check_setup" and not args:
             return doctor()
+        if name == "check_mediakit_setup" and not args:
+            from .mediakit_config import check_setup as check_mediakit_setup
+            return check_mediakit_setup()
         if name == "open_model_configuration" and not args:
             launcher = Path(os.environ.get("VIDEO_LOCALIZER_EXE") or app_dir() / "video-localizer.exe")
             if not launcher.is_absolute() or not launcher.is_file():
@@ -137,9 +167,18 @@ class Session:
         if name == "resume_batch" and not set(args) - {"batch_dir", "max_turns"} and "batch_dir" in args:
             _absolute(args["batch_dir"])
             return self._start(name, args)
-        if name == "check_model" and not set(args) - {"image_path", "timeout"}:
-            if "image_path" in args:
-                _absolute(args["image_path"])
+        if name == "convert_subtitles":
+            if set(args) - SUBTITLE_PARAMS.keys() or not {"input_path", "translations", "output_dir"} <= args.keys():
+                raise ValueError("请提供 input_path、translations、output_dir 及支持的 MediaKit 参数。")
+            for key in ("input_path", "translations", "output_dir"):
+                _absolute(args[key])
+            _subtitle_options(args)
+            return self._start(name, args)
+        if name == "resume_subtitles" and not set(args) - {"batch_dir", "max_polls", "stop_after"} and "batch_dir" in args:
+            _absolute(args["batch_dir"])
+            _subtitle_options(args)
+            return self._start(name, args)
+        if name == "check_model" and not set(args) - {"timeout"}:
             timeout = args.get("timeout", 180)
             if type(timeout) not in (int, float) or not 10 <= timeout <= 600:
                 raise ValueError("timeout 取值为 10–600 秒。")

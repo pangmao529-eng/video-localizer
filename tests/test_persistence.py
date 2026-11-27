@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import call, patch
 
-from video_localizer import config, executor, persistence
+from video_localizer import config, persistence
 
 
 def windows_error(code):
@@ -67,7 +67,7 @@ class PersistenceTests(unittest.TestCase):
                 sleep.assert_not_called()
 
     def test_json_writers_preserve_target_and_clean_temporary_on_replace_failure(self):
-        for writer in (config.write_json, executor._save):
+        for writer in (config.write_json,):
             with self.subTest(writer=writer.__module__), tempfile.TemporaryDirectory() as folder:
                 target = Path(folder) / "state.json"
                 target.write_bytes(b'{"old": true}')
@@ -80,7 +80,7 @@ class PersistenceTests(unittest.TestCase):
 
     def test_json_writers_recover_and_remove_temporary_files(self):
         real_replace = persistence.os.replace
-        for writer in (config.write_json, executor._save):
+        for writer in (config.write_json,):
             with self.subTest(writer=writer.__module__), tempfile.TemporaryDirectory() as folder:
                 target = Path(folder) / "state.json"
                 target.write_text('{"old": true}', encoding="utf-8")
@@ -100,7 +100,7 @@ class PersistenceTests(unittest.TestCase):
                 self.assertEqual(list(Path(folder).iterdir()), [target])
 
     def test_serialization_failure_preserves_target_and_cleans_temporary(self):
-        for writer in (config.write_json, executor._save):
+        for writer in (config.write_json,):
             with self.subTest(writer=writer.__module__), tempfile.TemporaryDirectory() as folder:
                 target = Path(folder) / "state.json"
                 target.write_bytes(b'{"old": true}')

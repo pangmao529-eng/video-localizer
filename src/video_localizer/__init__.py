@@ -1,3 +1,3 @@
-"""Hunyuan-controlled local video lettering for Windows and AI assistants."""
+"""Seedance cloud video localization with private media staging."""
 
-__version__ = "0.2.0rc15"
+__version__ = "0.2.0rc21"

@@ -22,6 +22,8 @@ def validate_report(folder, report):
             or not isinstance(report.get("endpoint"), str)):
         raise ValueError("Seedance 批次连接记录无效。")
     seedance_family(report.get("model"), report.get("model_family"))
+    if report.get("processing_backend") not in {None, "server-v1"}:
+        raise ValueError("Seedance 批次的媒体计算位置无效。")
     _parameters(report.get("params", {}))
     rows = report.get("videos")
     if not isinstance(rows, list) or not 1 <= len(rows) <= 20:
@@ -90,15 +92,17 @@ def prepare(params, model=SEEDANCE_25_MODEL, model_family=None):
             "reference_hashes": reference_hashes}
 
 
-def source_metadata(source, options):
+def source_metadata(source, options, *, max_duration=30):
+    if type(max_duration) is not int or not 4 <= max_duration <= 300:
+        raise ValueError("原片时长上限无效。")
     media = engine.probe(source, options, input_limit=False)
     width, height = media["width"], media["height"]
-    if not (4000 <= media["durationMs"] <= 30000 and 24 <= media["fps"] <= 60
+    if not (4000 <= media["durationMs"] <= max_duration * 1000 and 24 <= media["fps"] <= 60
             and 300 <= min(width, height) and max(width, height) <= 6000
             and .4 <= width / height <= 2.5 and 407696 <= width * height <= 8847360
             and media["bytes"] <= 200 * 1024**2 and media["videoCodec"] in {"h264", "hevc"}
             and media["audioCodec"] in {None, "aac", "mp3"}):
-        raise ValueError("原片超出当前 Seedance 流程输入限制（4–30 秒、24–60 帧及支持的尺寸/编码）。")
+        raise ValueError(f"原片超出当前 Seedance 流程输入限制（4–{max_duration} 秒、24–60 帧及支持的尺寸/编码）。")
     return {**media, "sha256": engine.digest(source)}
 
 
@@ -135,6 +139,9 @@ def _wait(cancelled):
 
 
 def run(folder, report, connection, progress=None, cancelled=None):
+    if report.get("processing_backend") == "server-v1":
+        from .seedance_server_batch import run as run_server
+        return run_server(folder, report, connection, progress, cancelled)
     if (seedance_family(report.get("model"), report.get("model_family")) == SEEDANCE_20_FAMILY
             and not report.get("segment_worker")):
         from .seedance_segment_batch import run as run_segmented
@@ -151,6 +158,9 @@ def _run_single(folder, report, connection, progress=None, cancelled=None):
             or seedance_family(report["model"], report.get("model_family")) != seedance_family(data["model"], data.get("model_family"))):
         raise SettingsError("已保存的提供方、模型、系列或端点与 Seedance 原批次不同，不能混用断点。")
     family = seedance_family(data["model"], data.get("model_family"))
+    from .selfhost_media import bind_report, MediaClient
+    media_backend = bind_report(report)
+    media_client = MediaClient(media_backend["endpoint"], cancelled=cancelled) if media_backend["provider"] == "self_hosted" else None
     prepared = prepare(report["params"], data["model"], family)
     if report.get("materials_fingerprint") not in {None, prepared["fingerprint"]}:
         raise ValueError("提示词或资料已变化，原 Seedance 批次不能继续；请创建新批次。")
@@ -193,7 +203,16 @@ def _run_single(folder, report, connection, progress=None, cancelled=None):
             if not row.get("task_id"):
                 if row.get("submission_state") == "submitting":
                     raise SeedanceError("submission_uncertain", "上次生成提交结果未知；为避免重复计费不会自动重发。请先在平台核对任务。", submission_uncertain=True)
-                if not row.get("file_id"):
+                if media_client:
+                    # The content hash identifies this idempotent upload even if
+                    # the server saved it but its previous response was lost.
+                    row["media_object_id"] = info["sha256"]
+                    save("self_hosted_upload")
+                    receipt = media_client.ensure_uploaded(source, info["sha256"])
+                    row.update(media_upload=receipt, upload_state="uploaded")
+                    save("self_hosted_uploaded")
+                    video_reference = media_client.reference(info["sha256"], info["bytes"])
+                elif not row.get("file_id"):
                     if row.get("upload_state") == "uploading":
                         raise SeedanceError("upload_uncertain", "上次文件上传结果未知，请先在平台核对文件；不会自动重复上传。")
                     row["upload_state"] = "uploading"
@@ -206,8 +225,9 @@ def _run_single(folder, report, connection, progress=None, cancelled=None):
                         raise
                     row.update(file_id=uploaded["file_id"], upload_state="uploaded")
                     save("uploaded")
-                uploaded = client.get_file(row["file_id"])
-                while uploaded.get("status") == "processing":
+                if not media_client:
+                    uploaded = client.get_file(row["file_id"])
+                while not media_client and uploaded.get("status") == "processing":
                     if cancelled():
                         raise SeedanceError("cancelled", "本机等待已取消，远端已有任务可能仍继续。")
                     if polls <= 0:
@@ -216,11 +236,13 @@ def _run_single(folder, report, connection, progress=None, cancelled=None):
                     save("waiting_for_upload")
                     _wait(cancelled)
                     uploaded = client.get_file(row["file_id"])
-                if uploaded.get("status") != "active":
+                if not media_client and uploaded.get("status") != "active":
                     row["remote_error_code"] = uploaded.get("error_code")
                     raise SeedanceError("upload_failed", "方舟文件未就绪，未提交视频编辑任务。")
-                if not uploaded.get("video_reference"):
+                if not media_client and not uploaded.get("video_reference"):
                     raise SeedanceError("file_reference_unavailable", "方舟文件已就绪但没有返回临时下载地址，无法作为 Seedance 视频参考；未提交生成。")
+                if not media_client:
+                    video_reference = uploaded["video_reference"]
                 if engine.digest(source) != info["sha256"]:
                     raise ValueError("上传期间原片发生变化，未提交生成。")
                 if cancelled():
@@ -229,7 +251,7 @@ def _run_single(folder, report, connection, progress=None, cancelled=None):
                 save("submitting")
                 try:
                     resolution = "480p" if min(info["width"], info["height"]) <= 480 else "720p" if min(info["width"], info["height"]) <= 720 else "1080p"
-                    task_id = client.create_edit(uploaded["video_reference"], prepared["prompt"],
+                    task_id = client.create_edit(video_reference, prepared["prompt"],
                         reference_images=prepared["images"], resolution=resolution,
                         generate_audio=not report.get("segment_worker", False))
                 except SeedanceError as error:

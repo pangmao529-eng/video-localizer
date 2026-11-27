@@ -1,0 +1,10 @@
+{
+  "status": "research_and_prompt_only",
+  "manual_video_processing": "stopped_by_user_instruction",
+  "new_cloud_jobs_submitted": 0,
+  "prompt_is_not_a_quality_guarantee": true,
+  "all_reference_rows": 54,
+  "full30_characters": 2594,
+  "first10_characters": 574,
+  "note": "Original video must be edited in cloud. Do not use the unfinished manual overlay plan or claim all-text acceptance."
+}

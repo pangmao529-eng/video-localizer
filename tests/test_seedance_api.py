@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 
 from video_localizer import backend, batch, config, seedance
-from video_localizer.model import _NoRedirect
+from video_localizer.seedance import _NoRedirect
 
 
 class SeedanceApiTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class SeedanceApiTests(unittest.TestCase):
         self.assertTrue(result["authentication_verified"])
         for field in ("model_access_verified", "generation_submitted", "automatic_visual_review_available"):
             self.assertFalse(result[field])
-        self.assertTrue(result["video_workflow_ready"])
+        self.assertFalse(result["video_workflow_ready"])
         self.assertNotIn(self.secret, json.dumps(result))
         self.assertNotIn(private_url, json.dumps(result))
         response.read.assert_called_once_with(seedance.MAX_PROBE_BYTES + 1)
@@ -92,28 +92,25 @@ class SeedanceApiTests(unittest.TestCase):
         self.key_reader.assert_not_called()
         self.opener.open.assert_not_called()
 
-    def test_backend_never_sends_seedance_credentials_to_hunyuan(self):
+    def test_backend_only_dispatches_seedance_authentication(self):
         with patch.object(backend, "settings", return_value=self.data), \
-             patch("video_localizer.hunyuan.check_model") as old_backend, \
              patch.object(seedance, "check_api", return_value={"status": "passed"}) as current:
             self.assertEqual(backend.check_model()["status"], "passed")
             current.assert_called_once()
-            old_backend.assert_not_called()
             current.reset_mock()
             self.assertEqual(backend.check_model(image_path="not-read.png")["error_code"], "unsupported_probe")
             current.assert_not_called()
-            old_backend.assert_not_called()
 
     def test_unknown_provider_does_not_fall_back(self):
         with patch.object(backend, "settings", return_value={**self.data, "provider": "unknown"}), \
-             patch("video_localizer.hunyuan.check_model") as old_backend:
+             patch.object(seedance, "check_api") as current:
             self.assertEqual(backend.check_model()["status"], "failed")
-            old_backend.assert_not_called()
+            current.assert_not_called()
 
     def test_unknown_provider_cannot_read_credentials(self):
         with patch.object(batch, "settings", return_value={**self.data, "provider": "unknown"}), \
              patch.object(batch, "read_key") as read_key, patch.object(batch, "runtime_paths") as paths:
-            with self.assertRaisesRegex(config.SettingsError, "提供方"):
+            with self.assertRaisesRegex(config.SettingsError, "Seedance"):
                 batch._connection()
             read_key.assert_not_called()
             paths.assert_not_called()
@@ -121,13 +118,16 @@ class SeedanceApiTests(unittest.TestCase):
     def test_doctor_distinguishes_configured_from_workflow_ready(self):
         with patch.object(batch, "settings", return_value=self.data), \
              patch.object(batch, "read_key", return_value=self.secret), \
-             patch.object(batch, "runtime_paths", return_value={}):
+             patch.object(batch, "runtime_paths", return_value={}), \
+             patch("video_localizer.selfhost_media.configuration", return_value=None):
             result = batch.doctor()
         self.assertEqual(result["provider"], "seedance")
         self.assertEqual(result["workflow"], "seedance_video_api")
         self.assertTrue(result["model_configured"])
         self.assertFalse(result["model_contacted"])
-        self.assertTrue(result["video_workflow_ready"])
+        self.assertFalse(result["media_upload_configured"])
+        self.assertFalse(result["media_server_contacted"])
+        self.assertFalse(result["video_workflow_ready"])
         self.assertFalse(result["automatic_visual_review_available"])
 
 

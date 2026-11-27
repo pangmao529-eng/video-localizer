@@ -9,6 +9,11 @@ dist/
 !.env.example
 settings.json
 profiles.json
+legacy-profiles.json
+media-upload.json
+server/service-config.json
+*.pem
+*.key
 *.mp4
 *.mov
 *.mkv
